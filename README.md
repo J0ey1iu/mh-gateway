@@ -2,7 +2,7 @@
 
 核心网关服务，依赖 [minimal-harness](https://github.com/J0ey1iu/minimal-harness) SDK。负责场景加载、用户权限校验、事件流归集，协调前端与各 worker 服务的通信。
 
-- 版本：**0.2.0a1**
+- 版本：**0.1.0a1**
 
 - 端口：`8005`
 - Swagger：`http://localhost:8005/docs`
