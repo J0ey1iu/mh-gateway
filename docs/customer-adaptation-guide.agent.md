@@ -1,6 +1,6 @@
 # Customer Adaptation Guide (for Code Agent)
 
-This document specifies the exact implementation contract for adapting `mh-gateway` into a customer environment. Follow these instructions precisely â€?any deviation will cause runtime failures.
+This document specifies the exact implementation contract for adapting `mh-gateway` into a customer environment. Follow these instructions precisely â€” any deviation will cause runtime failures.
 
 ---
 
@@ -46,7 +46,7 @@ class UserAuthProvider(Protocol):
 ```python
 @dataclass
 class UserIdentity:
-    user_id: str            # REQUIRED â€?used for permission checks & session ownership
+    user_id: str            # REQUIRED â€” used for permission checks & session ownership
     username: str = ""
     roles: list[str] = field(default_factory=list)
     extra_data: dict[str, Any] = field(default_factory=dict)
@@ -122,7 +122,7 @@ class MetadataManager(RegistryProvider, Protocol):
   "description": "What this agent does",
   "description_locale": "{\"zh\":\"...\",\"en\":\"...\"}",
   "system_prompt": "You are an agent that...",
-  "system_prompt_locale": "{\"zh\":\"ä½ æ˜¯ä¸€ä¸?..\",\"en\":\"You are...\"}",
+  "system_prompt_locale": "{\"zh\":\"ä½ æ˜¯ä¸€ä¸ª...\",\"en\":\"You are...\"}",
   "endpoint_url": "/api/v1/agents/agent-id/run",
   "provider": "openai",
   "model": "gpt-4o",
@@ -186,7 +186,7 @@ class M2MAuthProvider(Protocol):
 
 - Protects `POST /api/v1/agents/{name}/run` and `POST /api/v1/tools/*/execute`
 - Returns `app_id` (str) on success, `None` for 401
-- Default: allows all requests, returns `"default"` (development only â€?MUST replace in production)
+- Default: allows all requests, returns `"default"` (development only â€” MUST replace in production)
 ### 2.6 ConfigProvider (optional; import: `from mh_gateway import ConfigProvider`)
 
 ```python
@@ -201,7 +201,7 @@ class ConfigProvider(Protocol):
 - Output: config value string, or `None` if not found
 - Used for both non-sensitive configuration (Apollo, Nacos, Consul) and secrets (Vault, AWS Secrets Manager)
 - `SecretResolver` is a backward-compatible alias for `ConfigProvider`
-- `ConfigManager` accepts two `ConfigProvider` instances â€?one for config, one for secrets â€?differentiated by usage, not by type
+- `ConfigManager` accepts two `ConfigProvider` instances â€” one for config, one for secrets â€” differentiated by usage, not by type
 
 ---
 
@@ -223,7 +223,7 @@ class ConfigSchema(BaseModel):
     metrics_push_interval: int = 60           # Metrics push interval (seconds)
 ```
 
-**All fields have defaults** â€?the service starts without any environment variables.
+**All fields have defaults** â€” the service starts without any environment variables.
 
 **Resolution order** (per field, independent):
 1. Environment variable `{PREFIX}_{FIELD}` (highest priority, e.g. `ORCH_DB_PATH`)
@@ -302,10 +302,10 @@ def create_app(
 
 **Parameter rules:**
 - `settings` is REQUIRED
-- All adapter hooks are LifespanHooks (`Callable[[FastAPI], AbstractAsyncContextManager[None]]`) â€?they receive the app and override their slot on `app.state.adapters`
-- `llm_extra_headers_provider` is NOT a LifespanHook â€?it's a direct `Callable[[], Awaitable[dict[str, str]]]`
+- All adapter hooks are LifespanHooks (`Callable[[FastAPI], AbstractAsyncContextManager[None]]`) â€” they receive the app and override their slot on `app.state.adapters`
+- `llm_extra_headers_provider` is NOT a LifespanHook â€” it's a direct `Callable[[], Awaitable[dict[str, str]]]`
 - `management_provider` is the primary hook for agent/tool/scenario data (replaces the old `registry_provider` parameter)
-- `logger` is deprecated â€?configure `logging.getLogger()` (root logger) before calling `create_app()` instead
+- `logger` is deprecated â€” configure `logging.getLogger()` (root logger) before calling `create_app()` instead
 - Any `None` adapter gets a built-in default
 
 ### 4.2 AppState (import: `from mh_gateway.app import AppState`)
@@ -387,7 +387,7 @@ app = create_app(
 ### Step 6: Expose `app` at module level (for uvicorn)
 
 ```python
-# my_app.py â€?uvicorn my_app:app
+# my_app.py â€” uvicorn my_app:app
 ```
 
 ---
@@ -398,7 +398,7 @@ app = create_app(
 - `create_app()` sets up FastAPI with CORS, routers, middleware
 - On server startup (lifespan): `init_db(settings.database_url, auto_schema=settings.db_auto_schema)`
 - On server shutdown: close built-in adapters, close database connection
-- All ConfigSchema fields have defaults â€?no env vars needed for basic startup
+- All ConfigSchema fields have defaults â€” no env vars needed for basic startup
 
 ### Custom Database (Adapter)
 
