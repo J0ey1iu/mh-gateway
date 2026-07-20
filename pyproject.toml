@@ -1,0 +1,29 @@
+[project]
+name = "mh-gateway"
+version = "0.2.0a1"
+description = "Orchestration Gateway SDK — load scenarios, route agents, stream events. Built on top of minimal-harness."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+
+    "minimal-harness>=0.7.0a1",
+    "mh-service-kit>=0.1.1a1",
+]
+
+[build-system]
+requires = ["uv_build>=0.10.12,<0.12"]
+build-backend = "uv_build"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+mh_gateway = ["py.typed", "static/**"]
+
+[tool.uv.sources]
+minimal-harness = { workspace = true }
+mh-service-kit = { workspace = true }
+
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true
