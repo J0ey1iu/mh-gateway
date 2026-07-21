@@ -6,7 +6,7 @@ from typing import Any, AsyncIterator
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from minimal_harness.tool.registry import ToolRegistry
-from minimal_harness.types import MessageEvent, ToolStart
+from minimal_harness.types import MemoryUpdate, MessageEvent, ToolStart
 from pydantic import BaseModel
 
 from mh_gateway.api.dependencies import (
@@ -171,26 +171,6 @@ async def _stream_events(
             trace_id=trace_id,
         )
 
-        adapters = request.app.state.adapters
-        provider_store = getattr(adapters, "llm_provider_store", None)
-        max_context = 0
-        if provider_store and agent_registry:
-            meta = await agent_registry.get(agent_name)
-            if meta:
-                provider_ref = meta.provider
-                model_code = meta.model
-                if provider_ref:
-                    entity = await provider_store.get_provider(provider_ref)
-                    if entity:
-                        for m in entity.get("models", []):
-                            if m.get("code", "") == model_code:
-                                max_context = m.get("max_context", 0)
-                                break
-        total_tokens = session.memory.get_message_usage().get("total_tokens", 0)
-        yield format_sse(
-            "ModelInfo", {"max_context": max_context, "total_tokens": total_tokens}
-        )
-
         task, stop_event, queue = await runtime.run(
             user_input=[{"type": "text", "text": message}],
             agent_metadata_id=agent_name,
@@ -205,6 +185,12 @@ async def _stream_events(
 
             if isinstance(event, MessageEvent):
                 continue
+
+            if isinstance(event, MemoryUpdate):
+                try:
+                    await store.update_usage(session.memory, memory_id)
+                except Exception:
+                    logger.exception("Failed to persist token usage")
 
             event_type = type(event).__name__
             payload = serialize_harness_event(event)
