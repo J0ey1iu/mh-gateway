@@ -11,7 +11,7 @@ from mh_gateway.api.dependencies import (
     resolve_request_permissions,
 )
 from mh_gateway.api.locale import parse_locale, resolve_display_name
-from mh_gateway.services.compaction import _format_messages_for_summary
+from minimal_harness.agent._compaction import build_chat_payload
 from mh_gateway.services.database import get_session_store
 from mh_gateway.services.runtime_service import (
     acquire_session_lock,
@@ -258,6 +258,7 @@ async def compact_session(
 
         llm_provider = llm_provider_registry.create(provider_type, cfg)
         all_msgs = session.get_all_messages()
+        system_prompt = agent_meta.get("system_prompt", "") or ""
 
         async def _stream_with_lock():
             content_accumulated = ""
@@ -276,7 +277,7 @@ async def compact_session(
                         },
                     )
                     start_time = __import__("time").time()
-                    payload = _format_messages_for_summary(list(all_msgs), None)
+                    payload = build_chat_payload(system_prompt, list(all_msgs), None)
                     response = await llm_provider.chat(messages=payload, tools=[])  # type: ignore[arg-type]
                     async for delta in response:
                         if not delta:
