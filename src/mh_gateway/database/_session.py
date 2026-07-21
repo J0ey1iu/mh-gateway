@@ -146,5 +146,16 @@ class SimpleSession:
             total_tokens=total_tokens,
         )
 
+    async def compress_tool_messages(
+        self,
+        summarizer: Any,
+        tool_token_threshold: int = 0,
+    ) -> AsyncIterator[CompactionEvent]:
+        async for evt in self._memory.compress_tool_messages(
+            summarizer=summarizer,
+            tool_token_threshold=tool_token_threshold,
+        ):
+            yield evt
+
     def reset_message_usage(self) -> None:
         self._memory.reset_message_usage()
