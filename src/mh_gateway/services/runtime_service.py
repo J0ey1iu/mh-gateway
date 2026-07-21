@@ -201,6 +201,24 @@ def format_sse(event: str, data: dict[str, Any]) -> str:
     )
 
 
+async def resolve_model_max_context(
+    management_provider: Any,
+    provider_store: Any,
+    agent_name: str,
+) -> int:
+    """Look up the max_context for an agent's model from the provider store."""
+    if not provider_store or not management_provider:
+        return 0
+    agent_dict = await management_provider.get_agent(agent_name)
+    if not agent_dict:
+        return 0
+    provider_ref = agent_dict.get("provider_name", "") or agent_dict.get("provider", "")
+    model_code = agent_dict.get("model", "")
+    if not provider_ref or not model_code:
+        return 0
+    return await provider_store.get_model_max_context(provider_ref, model_code)
+
+
 class _SSEToolExecutorFactory:
     def create(self, binding: RemoteToolBinding) -> SSEToolExecutor:
         return SSEToolExecutor(binding)

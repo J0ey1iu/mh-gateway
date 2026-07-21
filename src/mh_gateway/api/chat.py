@@ -6,7 +6,7 @@ from typing import Any, AsyncIterator
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from minimal_harness.tool.registry import ToolRegistry
-from minimal_harness.types import MessageEvent, ToolStart
+from minimal_harness.types import MemoryUpdate, MessageEvent, ToolStart
 from pydantic import BaseModel
 
 from mh_gateway.api.dependencies import (
@@ -185,6 +185,12 @@ async def _stream_events(
 
             if isinstance(event, MessageEvent):
                 continue
+
+            if isinstance(event, MemoryUpdate):
+                try:
+                    await store.update_usage(session.memory, memory_id)
+                except Exception:
+                    logger.exception("Failed to persist token usage")
 
             event_type = type(event).__name__
             payload = serialize_harness_event(event)

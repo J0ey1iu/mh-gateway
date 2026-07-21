@@ -17,6 +17,7 @@ from mh_gateway.services.runtime_service import (
     acquire_session_lock,
     format_sse,
     release_session_lock,
+    resolve_model_max_context,
 )
 
 logger = logging.getLogger("orchestration.sessions")
@@ -74,10 +75,16 @@ async def create_session(
 
     display_name_locale: str | None = None
     adapters = request.app.state.adapters
-    if adapters.management_provider is not None:
-        agent_meta = await adapters.management_provider.get_agent(body.agent_name)
+    management_provider = getattr(adapters, "management_provider", None)
+    if management_provider is not None:
+        agent_meta = await management_provider.get_agent(body.agent_name)
         if agent_meta is not None:
             display_name_locale = agent_meta.get("display_name_locale")
+
+    provider_store = getattr(adapters, "llm_provider_store", None)
+    max_context = await resolve_model_max_context(
+        management_provider, provider_store, body.agent_name
+    )
 
     store = await get_session_store()
     session = await store.create_session(
@@ -99,6 +106,8 @@ async def create_session(
             display_name_locale,
             locale,
         ),
+        "max_context": max_context,
+        "total_tokens": 0,
     }
 
 
@@ -115,6 +124,13 @@ async def get_session(
     if session.user_id != user_id:
         raise HTTPException(status_code=403, detail="Access denied")
     locale = parse_locale(request.headers.get("accept-language"))
+    adapters = request.app.state.adapters
+    management_provider = getattr(adapters, "management_provider", None)
+    provider_store = getattr(adapters, "llm_provider_store", None)
+    max_context = await resolve_model_max_context(
+        management_provider, provider_store, session.agent_name
+    )
+    total_tokens = session.memory.get_message_usage().get("total_tokens", 0)
     return {
         "memory_id": session.session_id,
         "title": session.title or "Untitled",
@@ -129,6 +145,8 @@ async def get_session(
             locale,
         ),
         "compact_offset": session.memory.get_forward_offset(),
+        "max_context": max_context,
+        "total_tokens": total_tokens,
     }
 
 
@@ -146,9 +164,18 @@ async def get_session_messages(
         raise HTTPException(status_code=403, detail="Access denied")
     items = store.get_messages_as_items(session)
     compact_offset = session.memory.get_forward_offset()
+    adapters = request.app.state.adapters
+    management_provider = getattr(adapters, "management_provider", None)
+    provider_store = getattr(adapters, "llm_provider_store", None)
+    max_context = await resolve_model_max_context(
+        management_provider, provider_store, session.agent_name
+    )
+    total_tokens = session.memory.get_message_usage().get("total_tokens", 0)
     return {
         "items": items,
         "compact_offset": compact_offset,
+        "total_tokens": total_tokens,
+        "max_context": max_context,
     }
 
 
