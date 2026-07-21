@@ -84,6 +84,7 @@ class AgentCreate(BaseModel):
     llm_config: dict[str, Any] = {}
     agent_type: str = "simple"
     compaction: dict[str, Any] = {}
+    tool_compaction: dict[str, Any] = {}
 
 
 class AgentUpdate(BaseModel):
@@ -99,6 +100,7 @@ class AgentUpdate(BaseModel):
     llm_config: dict[str, Any] | None = None
     agent_type: str | None = None
     compaction: dict[str, Any] | None = None
+    tool_compaction: dict[str, Any] | None = None
 
 
 class ToolCreate(BaseModel):
