@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from mh_gateway.api.dependencies import require_permission
+from minimal_harness.agent.factory import get_builtin_agent_type_schemas
 
 logger = logging.getLogger("orchestration.management")
 
@@ -487,6 +488,13 @@ async def delete_agent(
             "Delete agent not found name=%s by user=%s: %s", name, user_id, e
         )
         raise HTTPException(404, str(e)) from None
+
+
+@router.get("/agent-types")
+async def list_agent_types(
+    user_id: str = Depends(require_permission("manage:agent:*")),
+) -> list[dict[str, Any]]:
+    return get_builtin_agent_type_schemas()
 
 
 @router.get("/providers")
