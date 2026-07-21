@@ -47,7 +47,7 @@ from mh_gateway.adapters import (
     match_permission,
 )
 from mh_gateway.services.audit_middleware import AuditMiddleware
-from mh_gateway.services.compaction import make_llm_summarizer
+
 from mh_gateway.services.database import get_session_store
 from mh_gateway.services.perm_middleware import PermissionMiddleware
 
@@ -575,7 +575,6 @@ async def create_runtime(
             executor_factories={"default": _SSEToolExecutorFactory()},
         ),
         emit_message_events=emit_message_events,
-        compaction_summarizer_factory=make_llm_summarizer,
         default_compaction_settings=CompactionSettings(
             prompt_token_threshold=8000,
             keep_recent=6,
