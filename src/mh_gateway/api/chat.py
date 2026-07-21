@@ -186,7 +186,10 @@ async def _stream_events(
                             if m.get("code", "") == model_code:
                                 max_context = m.get("max_context", 0)
                                 break
-        yield format_sse("ModelInfo", {"max_context": max_context})
+        total_tokens = session.memory.get_message_usage().get("total_tokens", 0)
+        yield format_sse(
+            "ModelInfo", {"max_context": max_context, "total_tokens": total_tokens}
+        )
 
         task, stop_event, queue = await runtime.run(
             user_input=[{"type": "text", "text": message}],
