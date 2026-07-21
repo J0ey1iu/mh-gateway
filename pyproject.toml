@@ -6,8 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
-
-    "minimal-harness==0.7.0a3",
+    "minimal-harness==0.7.0a4",
     "mh-service-kit==0.1.1a3",
 ]
 
