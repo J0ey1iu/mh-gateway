@@ -121,6 +121,13 @@ class ToolUpdate(BaseModel):
     source_code: str | None = None
 
 
+class ModelInfo(BaseModel):
+    id: str
+    code: str = ""
+    display_name: str = ""
+    max_context: int = 0
+
+
 class ProviderCreate(BaseModel):
     name: str
     provider_type: str = "openai"
@@ -128,6 +135,7 @@ class ProviderCreate(BaseModel):
     base_url: str = ""
     default_model: str = ""
     description: str = ""
+    models: list[ModelInfo] = []
 
 
 class ProviderUpdate(BaseModel):
@@ -136,6 +144,7 @@ class ProviderUpdate(BaseModel):
     base_url: str | None = None
     default_model: str | None = None
     description: str | None = None
+    models: list[ModelInfo] | None = None
 
 
 class AddScenarioAgentRequest(BaseModel):
@@ -610,6 +619,109 @@ async def delete_provider_config(
             e,
         )
         raise HTTPException(404, str(e)) from None
+
+
+# ── Provider Model CRUD ──
+
+
+def _get_models(provider: dict[str, Any]) -> list[dict[str, Any]]:
+    return provider.get("models", [])
+
+
+@router.get("/provider-configs/{name}/models")
+async def list_provider_models(
+    request: Request,
+    name: str,
+    user_id: str = Depends(require_permission("manage:agent:*")),
+) -> list[dict[str, Any]]:
+    adapters = request.app.state.adapters
+    store = getattr(adapters, "llm_provider_store", None)
+    if store is None:
+        raise HTTPException(501, "Provider store not configured")
+    p = await store.get_provider(name)
+    if p is None:
+        raise HTTPException(404, "Provider config not found")
+    return _get_models(p)
+
+
+@router.post("/provider-configs/{name}/models", status_code=201)
+async def create_provider_model(
+    request: Request,
+    name: str,
+    body: ModelInfo,
+    user_id: str = Depends(require_permission("manage:agent:*")),
+) -> dict[str, Any]:
+    adapters = request.app.state.adapters
+    store = getattr(adapters, "llm_provider_store", None)
+    if store is None:
+        raise HTTPException(501, "Provider store not configured")
+    p = await store.get_provider(name)
+    if p is None:
+        raise HTTPException(404, "Provider config not found")
+    models = _get_models(p)
+    if any(m.get("id") == body.id for m in models):
+        raise HTTPException(409, f"Model '{body.id}' already exists")
+    model_dict = body.model_dump()
+    models.append(model_dict)
+    await store.update_provider(name, {"models": models, "updated_by": user_id})
+    logger.info("Model %s added to provider %s by user=%s", body.id, name, user_id)
+    return model_dict
+
+
+@router.put("/provider-configs/{name}/models/{model_id}")
+async def update_provider_model(
+    request: Request,
+    name: str,
+    model_id: str,
+    body: ModelInfo,
+    user_id: str = Depends(require_permission("manage:agent:*")),
+) -> dict[str, Any]:
+    adapters = request.app.state.adapters
+    store = getattr(adapters, "llm_provider_store", None)
+    if store is None:
+        raise HTTPException(501, "Provider store not configured")
+    p = await store.get_provider(name)
+    if p is None:
+        raise HTTPException(404, "Provider config not found")
+    if body.id != model_id:
+        raise HTTPException(422, "Model id in body does not match path parameter")
+    models = _get_models(p)
+    for i, m in enumerate(models):
+        if m.get("id") == model_id:
+            model_dict = body.model_dump()
+            models[i] = model_dict
+            await store.update_provider(name, {"models": models, "updated_by": user_id})
+            logger.info(
+                "Model %s updated for provider %s by user=%s",
+                model_id,
+                name,
+                user_id,
+            )
+            return model_dict
+    raise HTTPException(404, f"Model '{model_id}' not found")
+
+
+@router.delete("/provider-configs/{name}/models/{model_id}")
+async def delete_provider_model(
+    request: Request,
+    name: str,
+    model_id: str,
+    user_id: str = Depends(require_permission("manage:agent:*")),
+) -> dict[str, str]:
+    adapters = request.app.state.adapters
+    store = getattr(adapters, "llm_provider_store", None)
+    if store is None:
+        raise HTTPException(501, "Provider store not configured")
+    p = await store.get_provider(name)
+    if p is None:
+        raise HTTPException(404, "Provider config not found")
+    models = _get_models(p)
+    new_models = [m for m in models if m.get("id") != model_id]
+    if len(new_models) == len(models):
+        raise HTTPException(404, f"Model '{model_id}' not found")
+    await store.update_provider(name, {"models": new_models, "updated_by": user_id})
+    logger.info("Model %s deleted from provider %s by user=%s", model_id, name, user_id)
+    return {"status": "deleted", "model_id": model_id}
 
 
 # ── Tools ──
