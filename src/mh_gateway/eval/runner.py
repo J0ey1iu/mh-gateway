@@ -138,9 +138,7 @@ async def run_batch_eval(
 
                     session_id = f"eval_{batch_id}_{question.question_id}"
                     store = await get_session_store(request)
-                    agent_meta = await adapters.metadata.get_agent(
-                        question.agent_name
-                    )
+                    agent_meta = await adapters.metadata.get_agent(question.agent_name)
                     await store.create_session(
                         session_id=session_id,
                         agent_name=question.agent_name,

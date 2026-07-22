@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 from collections.abc import Generator
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock
@@ -282,7 +281,9 @@ class TestAuditMiddlewareStructuredLogging:
         set_collector(MetricsCollector())
         c = get_collector()
         c.llm_requests_total.inc({"provider": "openai", "model": "gpt", "status": "ok"})
-        c.llm_tokens_total.inc({"provider": "openai", "model": "gpt", "type": "prompt"}, 5)
+        c.llm_tokens_total.inc(
+            {"provider": "openai", "model": "gpt", "type": "prompt"}, 5
+        )
         c.llm_tokens_total.inc(
             {"provider": "openai", "model": "gpt", "type": "completion"}, 7
         )

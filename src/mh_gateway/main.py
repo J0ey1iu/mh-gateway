@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from minimal_harness.llm.factory import register_builtin_providers
-from minimal_harness.llm.llm import LLMProvider, ProviderFactory
+from minimal_harness.llm.llm import ProviderFactory
 
 from mh_gateway.adapters import (
     AuthorizationProvider,
@@ -36,7 +36,11 @@ from mh_gateway.adapters import (
 from mh_gateway.app import GatewayAdapters, create_app
 from mh_gateway.config import ConfigSchema
 from mh_gateway.config_manager import ConfigManager
-from mh_gateway.llm import DefaultLLMProviderService, LLMConfigBackend, LLMProviderConfig
+from mh_gateway.llm import (
+    DefaultLLMProviderService,
+    LLMConfigBackend,
+    LLMProviderConfig,
+)
 from mh_gateway.session import SimpleSession
 
 
@@ -117,7 +121,9 @@ class _EmptyMetadata(MetadataRepository):
     async def create_scenario(self, scenario: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG002
         raise ValueError("create_scenario is not supported by the default main app")
 
-    async def update_scenario(self, scenario_id: str, scenario: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG002
+    async def update_scenario(
+        self, scenario_id: str, scenario: dict[str, Any]
+    ) -> dict[str, Any]:  # noqa: ARG002
         raise ValueError("update_scenario is not supported by the default main app")
 
     async def delete_scenario(self, scenario_id: str) -> None:  # noqa: ARG002
@@ -131,7 +137,9 @@ class _EmptyMetadata(MetadataRepository):
     async def remove_scenario_agent(  # noqa: ARG002
         self, scenario_id: str, agent_name: str
     ) -> dict[str, Any]:
-        raise ValueError("remove_scenario_agent is not supported by the default main app")
+        raise ValueError(
+            "remove_scenario_agent is not supported by the default main app"
+        )
 
     async def add_agent_tool(  # noqa: ARG002
         self, scenario_id: str, agent_name: str, tool_name: str
@@ -183,14 +191,17 @@ class _MemoryLLMConfigBackend(LLMConfigBackend):
         self._configs[config.name] = saved
         return saved
 
-    async def update(
-        self, name: str, config: LLMProviderConfig
-    ) -> LLMProviderConfig:
+    async def update(self, name: str, config: LLMProviderConfig) -> LLMProviderConfig:
         existing = self._configs.get(name)
         if existing is None:
             raise ValueError(f"Provider '{name}' not found")
         merged = LLMProviderConfig(
-            **{**existing.__dict__, **config.__dict__, "name": name, "updated_at": datetime.now(UTC).isoformat()}
+            **{
+                **existing.__dict__,
+                **config.__dict__,
+                "name": name,
+                "updated_at": datetime.now(UTC).isoformat(),
+            }
         )
         self._configs[name] = merged
         return merged
@@ -200,9 +211,7 @@ class _MemoryLLMConfigBackend(LLMConfigBackend):
             raise ValueError(f"Provider '{name}' not found")
         del self._configs[name]
 
-    async def get_model_max_context(
-        self, provider_name: str, model_code: str
-    ) -> int:
+    async def get_model_max_context(self, provider_name: str, model_code: str) -> int:
         cfg = self._configs.get(provider_name)
         if not cfg:
             return 0
@@ -241,7 +250,10 @@ class _MemorySessionStore(SessionRepository):
         return None
 
     async def save_memory(
-        self, memory: Any, session_id: str, extra: dict[str, Any] | None = None  # noqa: ARG002
+        self,
+        memory: Any,
+        session_id: str,
+        extra: dict[str, Any] | None = None,  # noqa: ARG002
     ) -> None:
         return None
 
@@ -318,7 +330,9 @@ def _default_adapter_lifespan():
             metadata=_EmptyMetadata(),
             llm=llm_service,
             sessions=_MemorySessionStore(),
-            eval_results=None if not app.state.adapters_settings.enable_eval else _NoopEvalStorage(),
+            eval_results=None
+            if not app.state.adapters_settings.enable_eval
+            else _NoopEvalStorage(),
         )
         yield bundle
 

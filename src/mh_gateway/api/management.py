@@ -519,10 +519,7 @@ async def list_provider_configs(
     page_size: int = Query(0, ge=0, description="Items per page (0 = all)"),
     user_id: str = Depends(require_permission("manage:agent:*")),
 ) -> ListResponse:
-    items = [
-        c.to_dict()
-        for c in await request.app.state.adapters.llm.list_configs()
-    ]
+    items = [c.to_dict() for c in await request.app.state.adapters.llm.list_configs()]
     return ListResponse(
         **_filter_and_page(
             items,

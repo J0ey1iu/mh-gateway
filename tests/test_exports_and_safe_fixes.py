@@ -1,6 +1,5 @@
 import asyncio
 
-import pytest
 
 from mh_gateway import (
     AdapterLifespan,

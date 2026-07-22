@@ -29,7 +29,7 @@ responsibility:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from minimal_harness.llm.llm import LLMProvider
@@ -231,9 +231,7 @@ class MetadataRepository(Protocol):
     async def list_agents(self) -> list[dict[str, Any]]: ...
     async def get_tool(self, name: str) -> dict[str, Any] | None: ...
     async def list_tools(self) -> list[dict[str, Any]]: ...
-    async def get_tools(
-        self, names: list[str]
-    ) -> dict[str, dict[str, Any] | None]:
+    async def get_tools(self, names: list[str]) -> dict[str, dict[str, Any] | None]:
         """Batch fetch tool metadata; missing tools are returned as ``None``."""
         ...
 
@@ -256,9 +254,7 @@ class MetadataRepository(Protocol):
 
     # ── Scenario CRUD ──
 
-    async def create_scenario(
-        self, scenario: dict[str, Any]
-    ) -> dict[str, Any]: ...
+    async def create_scenario(self, scenario: dict[str, Any]) -> dict[str, Any]: ...
     async def update_scenario(
         self, scenario_id: str, scenario: dict[str, Any]
     ) -> dict[str, Any]: ...

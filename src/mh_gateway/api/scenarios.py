@@ -51,8 +51,7 @@ async def _enrich_agents_for_scenario(
         agents = [
             a
             for a in [
-                await adapters.metadata.get_agent(name)
-                for name in scenario_agents
+                await adapters.metadata.get_agent(name) for name in scenario_agents
             ]
             if a is not None
         ]

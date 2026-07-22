@@ -22,9 +22,7 @@ class PermissionMiddleware(Middleware):
 
         # Lazy-load permissions on first tool call (avoids blocking constructor)
         if self._user_perms is None:
-            self._user_perms = await self._authorization.get_permissions(
-                self._user_id
-            )
+            self._user_perms = await self._authorization.get_permissions(self._user_id)
 
         if match_permission(self._user_perms, required_perm):
             return True

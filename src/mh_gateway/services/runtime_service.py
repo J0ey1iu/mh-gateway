@@ -35,6 +35,7 @@ from mh_gateway.adapters import (
 from mh_gateway.api.locale import parse_locale_json
 from mh_gateway.services.audit_middleware import AuditMiddleware
 from mh_gateway.services.database import get_session_store
+from mh_gateway.services.perm_middleware import PermissionMiddleware
 
 logger = logging.getLogger("orchestration.runtime")
 
@@ -54,7 +55,7 @@ def serialize_harness_event(event: Any) -> dict[str, Any]:
     Thin wrapper over :func:`mh_service_kit.sse.serialize_event` kept
     here so the chat endpoint can import a single helper.
     """
-    return _serialize_event_from_kit(event)
+    return _serialize_event_from_kit(event)  # type: ignore[no-any-return]
 
 
 # ── Public helpers ───────────────────────────────────────────────────────────
@@ -244,9 +245,7 @@ async def create_runtime(
     authorization = adapters.authorization
     outbound_auth = adapters.outbound_auth
     llm_service = adapters.llm
-    verify_agent_tool_ssl = getattr(
-        adapters.settings, "verify_agent_tool_ssl", False
-    )
+    verify_agent_tool_ssl = getattr(adapters.settings, "verify_agent_tool_ssl", False)
 
     agent_registry = AgentRegistry()
 
@@ -358,7 +357,7 @@ async def create_runtime(
                 resolved_model = target_agent_meta.model
 
     middleware: list[Middleware] = [
-        PermissionMiddleware(user_id, authorization),
+        PermissionMiddleware(user_id, authorization),  # type: ignore[arg-type]
         AuditMiddleware(
             user_id=user_id,
             session_id=session_id,

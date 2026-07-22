@@ -79,7 +79,7 @@ async def chat(
     # all concurrent requests targeting the same memory_id.
     lock = await acquire_session_lock(memory_id)
     try:
-        store = await get_session_store()
+        store = await get_session_store(request)
         session = await store.get_session(memory_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")

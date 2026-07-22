@@ -68,9 +68,7 @@ async def discover_agents_execute(
 
             scenario_agent_names: set[str] | None = None
             if scenario_id:
-                scenario_data = await adapters.metadata.get_scenario(
-                    scenario_id
-                )
+                scenario_data = await adapters.metadata.get_scenario(scenario_id)
                 if scenario_data is not None:
                     scenario_agent_names = _apply_permission_filter(
                         {a["name"] for a in scenario_data.get("agents", [])},
@@ -162,7 +160,7 @@ async def handoff_execute(
             combined = f"Context: {context_summary}\n\nTask: {task_description}"
 
             handoff_session_id = f"mem_{uuid.uuid4().hex[:12]}"
-            store = await get_session_store()
+            store = await get_session_store(request)
             await store.create_session(
                 session_id=handoff_session_id,
                 agent_name=target_agent_name,

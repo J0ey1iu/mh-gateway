@@ -77,10 +77,9 @@ async def create_session(
 
     display_name_locale: str | None = None
     adapters = request.app.state.adapters
-    if metadata is not None:
-        agent_meta = await metadata.get_agent(body.agent_name)
-        if agent_meta is not None:
-            display_name_locale = agent_meta.get("display_name_locale")
+    agent_meta = await adapters.metadata.get_agent(body.agent_name)
+    if agent_meta is not None:
+        display_name_locale = agent_meta.get("display_name_locale")
 
     max_context = await resolve_model_max_context(
         adapters.metadata, adapters.llm, body.agent_name

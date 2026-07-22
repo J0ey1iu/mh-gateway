@@ -77,7 +77,7 @@ async def _handoff_fn(
         return
 
     identity = get_current_user_id() or ""
-    store = await get_session_store()
+    store = await get_session_store(request)
 
     import uuid
 

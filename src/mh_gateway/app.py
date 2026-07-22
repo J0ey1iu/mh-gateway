@@ -18,7 +18,7 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Protocol
+from typing import Any, Callable, Protocol
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,7 +27,6 @@ from fastapi.staticfiles import StaticFiles
 
 from mh_gateway.adapters import (
     AuthorizationProvider,
-    ConfigProvider,
     EvalResultRepository,
     LLMProviderService,
     M2MAuthenticator,

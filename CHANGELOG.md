@@ -2,6 +2,45 @@
 
 ## 0.2.0a1
 
+- **BREAKING**: collapse 13 adapter protocols into 9 unified
+  contracts; `create_app` now takes a single
+  `AdapterLifespan` returning an immutable `GatewayAdapters`
+  bundle.  The mutable `AppState` with 14 named hook slots is
+  removed.  Removed symbols (no longer importable from
+  `mh_gateway`): `AppState`, `UserAuthProvider`, `PermissionChecker`,
+  `M2MAuthProvider`, `OutboundAuthProvider` (now takes an
+  `OutboundRequestContext`), `RegistryProvider`, `MetadataManager`,
+  `LLMProviderFactory`, `LLMProviderRegistry`, `LLMProviderStore`,
+  `DatabaseProtocol`, `SessionStoreProtocol`, `EvalResultStorage`,
+  `SecretResolver`, `LifespanHook`, `ExtraHeadersProvider`.
+- New unified abstractions: `UserAuthenticator`,
+  `AuthorizationProvider`, `M2MAuthenticator`, `OutboundAuthProvider`
+  (with `OutboundRequestContext`), `MetadataRepository`,
+  `LLMProviderService` (with `DefaultLLMProviderService`,
+  `LLMProviderConfig`, `LLMConfigBackend`, `LLMHeaderResolver`,
+  `LLMResolveSpec`), `SessionRepository` (with `healthcheck()`),
+  `EvalResultRepository`, `ConfigProvider`.
+- Public session DTOs (`Session`, `SessionSummary`,
+  `SimpleSession`) are now re-exported from
+  `mh_gateway.session`; the old `database._session` private
+  module is removed.
+- Runtime: LLM credentials are pre-loaded by
+  `llm.build_resolver(LLMResolveSpec)`, eliminating per-call
+  database reads on the agent hot path.
+- Outbound auth: M2M identity headers and the gateway-managed
+  `x-user-id` fallback are consolidated into a single
+  `OutboundAuthProvider.get_headers(OutboundRequestContext)` call.
+- `/ready` now delegates to `SessionRepository.healthcheck()`.
+- `orch-app` (`mh-orch-app`) and `mh-local` updated to construct a
+  single `AdapterLifespan`; `mh-local` no longer ships the
+  `_NullDatabase` shim.
+- tests: OpenAPI route surface pinned to 37 paths in
+  `tests/baseline_openapi.json`; both
+  `mh_gateway`/`mh-orch-app`/`mh-local` ship updates to
+  `tests/test_exports_and_safe_fixes.py`,
+  `tests/test_monitoring.py`, `tests/test_access_log_context.py`,
+  `tests/test_api.py`, and (for `mh-local`) new
+  `tests/test_local_app.py` + `tests/test_storage.py`.
 - chore: bump `minimal-harness>=0.7.0a1` and `mh-service-kit>=0.1.1a1` for pre-release alignment
 
 ## 0.1.3a1
