@@ -13,7 +13,9 @@ import json
 import sys
 from pathlib import Path
 
-DEFAULT_PATH = Path(__file__).resolve().parent.parent / "tests" / "baseline_openapi.json"
+DEFAULT_PATH = (
+    Path(__file__).resolve().parent.parent / "tests" / "baseline_openapi.json"
+)
 
 
 def main() -> int:

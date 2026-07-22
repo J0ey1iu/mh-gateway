@@ -554,9 +554,9 @@ async def create_runtime(
     # to the unified LLM service.  ``build_resolver`` is the public
     # entry point; it pre-loads configs and returns a sync closure.
     specs = [LLMResolveSpec(agent=meta, user=user_id) for meta in all_agents]
-    llm_provider_resolver: Callable[[AgentMetadata], LLMProvider] = (
-        await llm_service.build_resolver(specs)
-    )
+    llm_provider_resolver: Callable[
+        [AgentMetadata], LLMProvider
+    ] = await llm_service.build_resolver(specs)
 
     runtime = AgentRuntime(
         agent_registry=agent_registry,

@@ -1,6 +1,6 @@
 # Change Log
 
-## 0.2.0a1
+## 0.1.0a5
 
 - **BREAKING**: collapse 13 adapter protocols into 9 unified
   contracts; `create_app` now takes a single
@@ -31,17 +31,23 @@
   `x-user-id` fallback are consolidated into a single
   `OutboundAuthProvider.get_headers(OutboundRequestContext)` call.
 - `/ready` now delegates to `SessionRepository.healthcheck()`.
+- fix(llm): `create_llm` and `build_resolver` are now properly
+  `async`; the legacy `asyncio.run` workaround is removed.
+- fix(chat): `serialize_harness_event` returns a `dict` payload
+  (the legacy double-encoding path is removed).
+- fix(chat): SSE events are emitted with the flat schema expected by
+  the Vue/TypeScript frontend (`LLMChunk.{content, reasoning,
+  tool_calls}`, `LLMEnd.{content, reasoning_content, tool_calls,
+  usage, error}`, etc., no `type` discriminator wrapper).
+- tests: OpenAPI route surface pinned to 37 paths in
+  `tests/baseline_openapi.json`; SSE event schema locked in
+  `tests/test_event_schema.py`.
+- docs: `docs/adapter-migration-guide.md` for customers migrating
+  from the 14-hook `AppState` assembly to `AdapterLifespan`.
 - `orch-app` (`mh-orch-app`) and `mh-local` updated to construct a
   single `AdapterLifespan`; `mh-local` no longer ships the
   `_NullDatabase` shim.
-- tests: OpenAPI route surface pinned to 37 paths in
-  `tests/baseline_openapi.json`; both
-  `mh_gateway`/`mh-orch-app`/`mh-local` ship updates to
-  `tests/test_exports_and_safe_fixes.py`,
-  `tests/test_monitoring.py`, `tests/test_access_log_context.py`,
-  `tests/test_api.py`, and (for `mh-local`) new
-  `tests/test_local_app.py` + `tests/test_storage.py`.
-- chore: bump `minimal-harness>=0.7.0a1` and `mh-service-kit>=0.1.1a1` for pre-release alignment
+- chore: bump `minimal-harness==0.7.0a6` and `mh-service-kit==0.1.1a5` for lockstep pre-release alignment
 
 ## 0.1.3a1
 

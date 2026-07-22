@@ -181,9 +181,7 @@ class DefaultLLMProviderService:
         """
         agent = spec.agent
         provider_type = getattr(agent, "provider", "openai") or "openai"
-        provider_ref = (
-            getattr(agent, "provider_name", "") or provider_type
-        )
+        provider_ref = getattr(agent, "provider_name", "") or provider_type
         model = getattr(agent, "model", "") or ""
 
         cfg: dict[str, Any] = {"model": model}
@@ -228,9 +226,7 @@ class DefaultLLMProviderService:
                     for s in specs
                 )
             )
-            by_id = dict(
-                zip([s.agent.metadata_id for s in specs], results)
-            )
+            by_id = dict(zip([s.agent.metadata_id for s in specs], results))
 
         factory = self._factory
         header_resolver = self._header_resolver
@@ -279,9 +275,7 @@ class DefaultLLMProviderService:
     async def delete_config(self, name: str) -> None:
         await self._backend.delete(name)
 
-    async def get_model_max_context(
-        self, provider_name: str, model_code: str
-    ) -> int:
+    async def get_model_max_context(self, provider_name: str, model_code: str) -> int:
         return await self._backend.get_model_max_context(provider_name, model_code)
 
     async def close(self) -> None:

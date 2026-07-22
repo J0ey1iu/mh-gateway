@@ -137,16 +137,12 @@ def test_tool_end_with_tool_result_dataclass() -> None:
 
 
 def test_tool_end_with_raw_result() -> None:
-    out = serialize_harness_event(
-        ToolEnd(tool_call={"id": "1"}, result="ok")
-    )
+    out = serialize_harness_event(ToolEnd(tool_call={"id": "1"}, result="ok"))
     assert out == {"tool_call": {"id": "1"}, "result": "ok"}
 
 
 def test_memory_update_only_usage() -> None:
-    out = serialize_harness_event(
-        MemoryUpdate(usage={"total_tokens": 100})
-    )
+    out = serialize_harness_event(MemoryUpdate(usage={"total_tokens": 100}))
     assert out == {"usage": {"total_tokens": 100}}
 
 
@@ -156,9 +152,7 @@ def test_message_event_passes_through() -> None:
 
 
 def test_execution_events_flat() -> None:
-    assert serialize_harness_event(ExecutionStart(tool_calls=[])) == {
-        "tool_calls": []
-    }
+    assert serialize_harness_event(ExecutionStart(tool_calls=[])) == {"tool_calls": []}
     out = serialize_harness_event(
         ExecutionEnd(results=[], error=None, should_stop=False, response_text="")
     )
@@ -214,7 +208,16 @@ def test_no_type_discriminator_in_payload() -> None:
     message render.
     """
     for event, factory in [
-        (AgentEnd(response="r", time_taken=1.0, exceeded=False, interrupted=False, error=None), None),
+        (
+            AgentEnd(
+                response="r",
+                time_taken=1.0,
+                exceeded=False,
+                interrupted=False,
+                error=None,
+            ),
+            None,
+        ),
         (LLMChunk(chunk=_FakeChunk()), None),
     ]:
         assert "type" not in serialize_harness_event(event)
