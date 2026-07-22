@@ -19,6 +19,7 @@ from minimal_harness.tool.registry import ToolRegistry
 from minimal_harness.types import (
     AgentMetadata,
     CompactionSettings,
+    LLMStart,
     LocalToolBinding,
     RemoteToolBinding,
     ToolMetadata,
@@ -51,15 +52,35 @@ def format_sse(event: str, data: dict[str, Any]) -> str:
 def serialize_harness_event(event: Any) -> dict[str, Any]:
     """Serialise a minimal-harness runtime event to a plain dict.
 
-    ``mh_service_kit.sse.serialize_event`` formats the event into the
-    final ``"data: <json>\\n\\n"`` SSE line; the chat endpoint instead
-    needs the underlying ``dict`` so it can decorate the payload
-    (e.g. with a localised tool display name) and feed it through
-    the gateway's own :func:`format_sse`.
+    The returned dict is the *body* of the SSE ``data:`` line emitted
+    by the chat endpoint (see :func:`format_sse`).  The schema
+    intentionally matches what the web-frontend's chat store reads
+    on each event:
+
+    * ``LLMChunk`` exposes ``content`` and ``reasoning`` at the top
+      level (NOT nested under ``chunk``).
+    * ``LLMEnd`` exposes ``content`` and ``reasoning_content`` at
+      the top level.
+    * ``LLMStart`` exposes the ``_compute_llm_start_info`` summary
+      (tool names, message count, total chars).
+    * ``AgentEnd`` / ``ToolStart`` / ``ToolEnd`` expose their
+      business fields flat.
+
+    The dict deliberately omits a ``"type"`` discriminator; the SSE
+    ``event:`` line carries the type, and the frontend switches on
+    that.  A previous attempt at this function wrapped every event
+    in ``{"type": ..., ...}`` and nested LLMChunk fields under
+    ``"chunk"``; the frontend then read ``undefined`` for
+    ``data.content`` and the assistant message only rendered the
+    reasoning block.  This implementation restores the original
+    flat schema.
     """
     from minimal_harness.types import (
         AgentEnd,
         AgentStart,
+        CompactionChunk,
+        CompactionEnd,
+        CompactionStart,
         ExecutionEnd,
         ExecutionStart,
         LLMChunk,
@@ -69,14 +90,28 @@ def serialize_harness_event(event: Any) -> dict[str, Any]:
         MessageEvent,
         ToolEnd,
         ToolProgress,
+        ToolResult,
         ToolStart,
     )
 
+    def _serialize_chunk(chunk: Any) -> Any:
+        if isinstance(chunk, dict):
+            return {k: v for k, v in chunk.items() if not k.startswith("_")}
+        return str(chunk)
+
+    def _serialize_result(result: Any) -> Any:
+        if isinstance(result, dict):
+            return {k: v for k, v in result.items() if not k.startswith("_")}
+        if isinstance(result, Exception):
+            return f"[Error] {result}"
+        if not isinstance(result, str):
+            return str(result)
+        return result
+
     if isinstance(event, AgentStart):
-        return {"type": "agent_start", "user_input": event.user_input}
+        return {}
     if isinstance(event, AgentEnd):
         return {
-            "type": "agent_end",
             "response": event.response,
             "time_taken": event.time_taken,
             "exceeded": event.exceeded,
@@ -84,22 +119,17 @@ def serialize_harness_event(event: Any) -> dict[str, Any]:
             "error": event.error,
         }
     if isinstance(event, LLMStart):
-        return {
-            "type": "llm_start",
-            "messages": event.messages,
-            "tools": event.tools,
-        }
+        return _compute_llm_start_info(event)
     if isinstance(event, LLMChunk):
-        chunk = event.chunk
-        chunk_dict: dict[str, Any] = {
-            "content": getattr(chunk, "content", None) if chunk else None,
-            "reasoning": getattr(chunk, "reasoning", None) if chunk else None,
-            "tool_calls": getattr(chunk, "tool_calls", None) if chunk else None,
-        }
-        return {"type": "llm_chunk", "chunk": chunk_dict}
+        if event.chunk:
+            return {
+                "content": event.chunk.content,
+                "reasoning": event.chunk.reasoning,
+                "tool_calls": event.chunk.tool_calls,
+            }
+        return {}
     if isinstance(event, LLMEnd):
         return {
-            "type": "llm_end",
             "content": event.content,
             "reasoning_content": event.reasoning_content,
             "tool_calls": event.tool_calls,
@@ -107,34 +137,104 @@ def serialize_harness_event(event: Any) -> dict[str, Any]:
             "error": event.error,
         }
     if isinstance(event, ExecutionStart):
-        return {"type": "execution_start", "tool_calls": event.tool_calls}
+        return {"tool_calls": event.tool_calls}
     if isinstance(event, ExecutionEnd):
         return {
-            "type": "execution_end",
             "results": event.results,
             "error": event.error,
             "should_stop": event.should_stop,
             "response_text": event.response_text,
         }
     if isinstance(event, ToolStart):
-        return {"type": "tool_start", "tool_call": event.tool_call}
+        return {
+            "tool_call": event.tool_call,
+            "display_name": (
+                event.tool_call.get("function", {}).get("name", "")
+                if isinstance(event.tool_call, dict)
+                else ""
+            ),
+        }
     if isinstance(event, ToolProgress):
         return {
-            "type": "tool_progress",
             "tool_call": event.tool_call,
-            "chunk": event.chunk,
+            "chunk": _serialize_chunk(event.chunk),
         }
     if isinstance(event, ToolEnd):
+        # ``event.result`` is sometimes a ``ToolResult`` dataclass
+        # (with .content / .meta / .stop), sometimes a raw value
+        # (str / dict / Exception).  Flatten to the schema the
+        # frontend reads.
+        from minimal_harness.types import ToolResult
+
+        if isinstance(event.result, ToolResult):
+            return {
+                "tool_call": event.tool_call,
+                "result": _serialize_result(event.result.content),
+                "meta": event.result.meta,
+                "stop": event.result.stop,
+            }
         return {
-            "type": "tool_end",
             "tool_call": event.tool_call,
-            "result": event.result,
+            "result": _serialize_result(event.result),
         }
     if isinstance(event, MemoryUpdate):
-        return {"type": "memory_update", "usage": event.usage}
+        return {"usage": event.usage}
     if isinstance(event, MessageEvent):
-        return {"type": "message", "message": event.message}
-    return {"type": type(event).__name__}
+        return {"message": event.message}
+    if isinstance(event, CompactionStart):
+        return {
+            "dropped_message_count": event.dropped_message_count,
+            "existing_summary": event.existing_summary,
+            "keep_recent": event.keep_recent,
+            "total_tokens": event.total_tokens,
+        }
+    if isinstance(event, CompactionChunk):
+        return {
+            "delta": event.delta,
+            "accumulated": event.accumulated,
+        }
+    if isinstance(event, CompactionEnd):
+        return {
+            "summary": event.summary,
+            "dropped_message_count": event.dropped_message_count,
+            "new_offset": event.new_offset,
+            "duration": event.duration,
+            "error": event.error,
+        }
+    return {}
+
+
+def _compute_llm_start_info(event: LLMStart) -> dict[str, Any]:
+    total_chars = 0
+    for msg in event.messages:
+        role = msg.get("role", "")
+        if role == "system":
+            total_chars += len(msg.get("content", "") or "")
+        elif role == "user":
+            parts = msg.get("content", [])
+            if isinstance(parts, list):
+                for part in parts:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        total_chars += len(part.get("text", "") or "")
+        elif role == "assistant":
+            total_chars += len(msg.get("content", "") or "")
+            tool_calls = msg.get("tool_calls")
+            if tool_calls:
+                total_chars += len(json.dumps(tool_calls, ensure_ascii=False))
+        elif role == "tool":
+            total_chars += len(msg.get("content", "") or "")
+        elif role == "reasoning":
+            total_chars += len(msg.get("content", "") or "")
+    return {
+        "tool_names": [
+            t.get("function", {}).get("name")
+            if isinstance(t, dict)
+            else getattr(t, "name", str(t))
+            for t in event.tools
+        ],
+        "message_count": len(event.messages),
+        "total_chars": total_chars,
+    }
 
 
 # ── Public helpers ───────────────────────────────────────────────────────────
