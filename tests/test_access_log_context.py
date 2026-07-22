@@ -154,10 +154,10 @@ class _NoopLLM:
     def list_provider_types(self):
         return []
 
-    def create_llm(self, spec):
+    async def create_llm(self, spec):
         raise NotImplementedError
 
-    def build_resolver(self, specs):
+    async def build_resolver(self, specs):
         def _resolver(meta):
             raise NotImplementedError
 

@@ -179,7 +179,7 @@ async def run_agent(
         model=agent_meta.get("model", ""),
         llm_config=agent_meta.get("llm_config", {}),
     )
-    _agent_llm_resolver = adapters.llm.build_resolver(
+    _agent_llm_resolver = await adapters.llm.build_resolver(
         [LLMResolveSpec(agent=target_meta, user=identity or "")]
     )
 

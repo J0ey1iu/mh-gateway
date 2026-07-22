@@ -328,7 +328,7 @@ class LLMProviderService(Protocol):
         """Return the names of all registered LLM driver types."""
         ...
 
-    def create_llm(self, spec: LLMResolveSpec) -> "LLMProvider":
+    async def create_llm(self, spec: LLMResolveSpec) -> "LLMProvider":
         """Build a single ``LLMProvider`` instance.
 
         Resolves provider credentials from the config backend and
@@ -338,7 +338,7 @@ class LLMProviderService(Protocol):
         """
         ...
 
-    def build_resolver(
+    async def build_resolver(
         self, specs: list[LLMResolveSpec]
     ) -> "Callable[[AgentMetadata], LLMProvider]":
         """Build a synchronous per-agent resolver.

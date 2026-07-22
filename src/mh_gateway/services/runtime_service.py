@@ -376,7 +376,7 @@ async def create_runtime(
     # entry point; it pre-loads configs and returns a sync closure.
     specs = [LLMResolveSpec(agent=meta, user=user_id) for meta in all_agents]
     llm_provider_resolver: Callable[[AgentMetadata], LLMProvider] = (
-        llm_service.build_resolver(specs)
+        await llm_service.build_resolver(specs)
     )
 
     runtime = AgentRuntime(

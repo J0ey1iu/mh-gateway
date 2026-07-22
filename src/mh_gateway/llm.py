@@ -11,6 +11,11 @@ The :class:`DefaultLLMProviderService` bundles three collaborators:
 The two convenience entry points are :meth:`create_llm` (single
 instance) and :meth:`build_resolver` (a pre-loaded synchronous
 resolver suitable for ``minimal_harness``'s ``AgentRuntime``).
+
+Both are async to keep config/header I/O on the standard event loop.
+``build_resolver`` pre-loads the referenced configs once, then
+returns a sync closure that ``AgentRuntime`` can call from its
+agent loop without an extra event-loop hop.
 """
 
 from __future__ import annotations
@@ -166,34 +171,94 @@ class DefaultLLMProviderService:
     def list_provider_types(self) -> list[str]:
         return self._factory.list_providers()
 
-    def create_llm(self, spec: LMMAccessor) -> LLMProvider:
+    async def create_llm(self, spec: LLMResolveSpec) -> LLMProvider:
         """Build a single LLM instance for *spec*.
 
-        Performs async I/O (config fetch, header resolver) by reaching
-        into the running event loop.  If called from a sync context
-        without a running loop, raises ``RuntimeError``.
+        Resolves the provider config from the config backend and
+        consults the header resolver, then delegates to the matching
+        driver.  Raises ``ValueError`` if the driver is unknown or
+        the spec cannot be satisfied.
         """
-        return _create_llm_sync(
-            spec=spec,
-            factory=self._factory,
-            backend=self._backend,
-            header_resolver=self._header_resolver,
+        agent = spec.agent
+        provider_type = getattr(agent, "provider", "openai") or "openai"
+        provider_ref = (
+            getattr(agent, "provider_name", "") or provider_type
         )
+        model = getattr(agent, "model", "") or ""
 
-    def build_resolver(
+        cfg: dict[str, Any] = {"model": model}
+        if self._header_resolver is not None:
+            cfg["_extra_headers_provider"] = self._header_resolver
+
+        llm_config = getattr(agent, "llm_config", None) or {}
+        if isinstance(llm_config, dict):
+            cfg.update(llm_config)
+
+        if provider_ref:
+            entity = await self._backend.get(provider_ref)
+            if entity is not None:
+                provider_type = entity.provider_type or provider_type
+                if not model and entity.default_model:
+                    cfg["model"] = entity.default_model
+                    model = entity.default_model
+                if entity.api_key:
+                    cfg["api_key"] = entity.api_key
+                if entity.base_url:
+                    cfg["base_url"] = entity.base_url
+
+        return self._factory.create(provider_type, cfg)
+
+    async def build_resolver(
         self, specs: list[LLMResolveSpec]
     ) -> Callable[["AgentMetadata"], LLMProvider]:
         """Build a pre-loaded sync resolver for *specs*.
 
         Loads every referenced config in parallel before the agent
-        runtime begins; the returned closure is fully synchronous.
+        runtime begins; the returned closure is fully synchronous
+        and may be called from any thread.
         """
-        return _build_resolver_sync(
-            specs=specs,
-            factory=self._factory,
-            backend=self._backend,
-            header_resolver=self._header_resolver,
-        )
+        by_id: dict[str, LLMProviderConfig | None] = {}
+        if specs:
+            results = await asyncio.gather(
+                *(
+                    self._backend.get(
+                        getattr(s.agent, "provider_name", "")
+                        or getattr(s.agent, "provider", "")
+                    )
+                    for s in specs
+                )
+            )
+            by_id = dict(
+                zip([s.agent.metadata_id for s in specs], results)
+            )
+
+        factory = self._factory
+        header_resolver = self._header_resolver
+
+        def _resolver(agent: "AgentMetadata") -> LLMProvider:
+            provider_type = getattr(agent, "provider", "openai") or "openai"
+            model = getattr(agent, "model", "") or ""
+
+            cfg: dict[str, Any] = {"model": model}
+            if header_resolver is not None:
+                cfg["_extra_headers_provider"] = header_resolver
+            llm_config = getattr(agent, "llm_config", None) or {}
+            if isinstance(llm_config, dict):
+                cfg.update(llm_config)
+
+            entity = by_id.get(getattr(agent, "metadata_id", "") or "")
+            if entity is not None:
+                provider_type = entity.provider_type or provider_type
+                if not model and entity.default_model:
+                    cfg["model"] = entity.default_model
+                if entity.api_key:
+                    cfg["api_key"] = entity.api_key
+                if entity.base_url:
+                    cfg["base_url"] = entity.base_url
+
+            return factory.create(provider_type, cfg)
+
+        return _resolver
 
     # ── Config backend (thin pass-through) ───────────────────────────────────
 
@@ -214,152 +279,10 @@ class DefaultLLMProviderService:
     async def delete_config(self, name: str) -> None:
         await self._backend.delete(name)
 
-    async def get_model_max_context(self, provider_name: str, model_code: str) -> int:
+    async def get_model_max_context(
+        self, provider_name: str, model_code: str
+    ) -> int:
         return await self._backend.get_model_max_context(provider_name, model_code)
 
     async def close(self) -> None:
         await self._backend.close()
-
-
-# Alias used in the public method signature above.  Defined here so
-# the source order is friendlier to readers.
-LMMAccessor = LLMResolveSpec
-
-
-# ── Sync helpers ──────────────────────────────────────────────────────────────
-
-
-def _resolve_config_sync(
-    backend: LLMConfigBackend,
-    provider_ref: str,
-) -> LLMProviderConfig | None:
-    return _run_async(backend.get(provider_ref))
-
-
-def _resolve_headers_sync(
-    header_resolver: LLMHeaderResolver | None,
-) -> dict[str, str]:
-    if header_resolver is None:
-        return {}
-    return _run_async(header_resolver.headers())
-
-
-def _create_llm_sync(
-    *,
-    spec: LLMResolveSpec,
-    factory: ProviderFactory,
-    backend: LLMConfigBackend,
-    header_resolver: LLMHeaderResolver | None,
-) -> LLMProvider:
-    agent = spec.agent
-    provider_type = getattr(agent, "provider", "openai") or "openai"
-    provider_ref = getattr(agent, "provider_name", "") or provider_type
-    model = getattr(agent, "model", "") or ""
-
-    cfg: dict[str, Any] = {"model": model}
-    if header_resolver is not None:
-        cfg["_extra_headers_provider"] = header_resolver
-
-    llm_config = getattr(agent, "llm_config", None) or {}
-    if isinstance(llm_config, dict):
-        cfg.update(llm_config)
-
-    if provider_ref:
-        entity = _resolve_config_sync(backend, provider_ref)
-        if entity is not None:
-            provider_type = entity.provider_type or provider_type
-            if not model and entity.default_model:
-                cfg["model"] = entity.default_model
-                model = entity.default_model
-            if entity.api_key:
-                cfg["api_key"] = entity.api_key
-            if entity.base_url:
-                cfg["base_url"] = entity.base_url
-
-    return factory.create(provider_type, cfg)
-
-
-def _build_resolver_sync(
-    *,
-    specs: list[LLMResolveSpec],
-    factory: ProviderFactory,
-    backend: LLMConfigBackend,
-    header_resolver: LLMHeaderResolver | None,
-) -> Callable[["AgentMetadata"], LLMProvider]:
-    """Pre-load configs and return a sync resolver closure.
-
-    ``AgentMetadata`` objects are matched to their pre-loaded config
-    by ``metadata_id``; specs without a corresponding agent lookup
-    fall back to the inline agent fields.
-    """
-    by_id: dict[str, LLMProviderConfig | None] = {}
-    if specs:
-        by_id = dict(
-            zip(
-                [s.agent.metadata_id for s in specs],
-                _run_async(_gather_configs(specs, backend)),
-            )
-        )
-
-    def _resolver(agent: "AgentMetadata") -> LLMProvider:
-        provider_type = getattr(agent, "provider", "openai") or "openai"
-        model = getattr(agent, "model", "") or ""
-
-        cfg: dict[str, Any] = {"model": model}
-        if header_resolver is not None:
-            cfg["_extra_headers_provider"] = header_resolver
-        llm_config = getattr(agent, "llm_config", None) or {}
-        if isinstance(llm_config, dict):
-            cfg.update(llm_config)
-
-        entity = by_id.get(getattr(agent, "metadata_id", "") or "")
-        if entity is not None:
-            provider_type = entity.provider_type or provider_type
-            if not model and entity.default_model:
-                cfg["model"] = entity.default_model
-            if entity.api_key:
-                cfg["api_key"] = entity.api_key
-            if entity.base_url:
-                cfg["base_url"] = entity.base_url
-
-        return factory.create(provider_type, cfg)
-
-    return _resolver
-
-
-async def _gather_configs(
-    specs: list[LLMResolveSpec],
-    backend: LLMConfigBackend,
-) -> list[LLMProviderConfig | None]:
-    coros: list[Any] = []
-    for s in specs:
-        agent = s.agent
-        provider_ref = getattr(agent, "provider_name", "") or getattr(
-            agent, "provider", ""
-        )
-        if not provider_ref:
-            coros.append(_empty_config())
-        else:
-            coros.append(backend.get(provider_ref))
-    return await asyncio.gather(*coros)
-
-
-async def _empty_config() -> None:
-    return None
-
-
-def _run_async(coro: Any) -> Any:
-    """Run a coroutine in the currently running event loop.
-
-    Mirrors ``asyncio.run`` semantics for use inside sync helper
-    methods that must be called from a thread that already has a
-    loop (which is always the case inside the agent runtime).
-    """
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError as e:
-        raise RuntimeError(
-            "DefaultLLMProviderService sync methods must be called from "
-            "an async context. Await llm.list_configs/etc. instead."
-        ) from e
-    return coro

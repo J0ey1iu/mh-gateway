@@ -225,12 +225,12 @@ class _MockLLM:
     def list_provider_types(self) -> list[str]:
         return ["openai", "anthropic"]
 
-    def create_llm(self, spec):
+    async def create_llm(self, spec):
         from minimal_harness.llm.llm import LLMProvider
 
         return LLMProvider()  # type: ignore[abstract]
 
-    def build_resolver(self, specs):
+    async def build_resolver(self, specs):
         from minimal_harness.llm.llm import LLMProvider
 
         def _resolver(meta):

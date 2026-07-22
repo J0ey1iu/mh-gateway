@@ -227,7 +227,7 @@ async def compact_session(
             model=agent_meta.get("model", ""),
             llm_config=agent_meta.get("llm_config", {}),
         )
-        llm_provider = adapters.llm.create_llm(
+        llm_provider = await adapters.llm.create_llm(
             LLMResolveSpec(agent=target_meta, user=user_id)
         )
         all_msgs = session.get_all_messages()
