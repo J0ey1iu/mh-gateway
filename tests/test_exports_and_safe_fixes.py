@@ -1,19 +1,27 @@
 import asyncio
-import warnings
 
 import pytest
 
 from mh_gateway import (
-    AppState,
+    AdapterLifespan,
+    AuthorizationProvider,
     ConfigManager,
     ConfigProvider,
     ConfigSchema,
-    MetadataManager,
+    DefaultLLMProviderService,
+    EvalResultRepository,
+    GatewayAdapters,
+    LLMConfigBackend,
+    LLMHeaderResolver,
+    LLMProviderConfig,
+    LLMProviderService,
+    LLMResolveSpec,
+    M2MAuthenticator,
+    MetadataRepository,
     OutboundAuthProvider,
-    PermissionChecker,
-    RegistryProvider,
-    SecretResolver,
-    UserAuthProvider,
+    OutboundRequestContext,
+    SessionRepository,
+    UserAuthenticator,
     UserIdentity,
     create_app,
     get_current_auth_token,
@@ -22,24 +30,35 @@ from mh_gateway import (
     get_current_request,
     get_current_trace_id,
     get_current_user_id,
+    has_broad_permission,
     match_permission,
 )
 from mh_gateway.config_manager import _coerce_env_value
 
 
 def test_top_level_exports_available():
-    assert AppState is not None
+    assert AdapterLifespan is not None
+    assert GatewayAdapters is not None
     assert ConfigManager is not None
     assert ConfigSchema is not None
     assert ConfigProvider is not None
-    assert SecretResolver is ConfigProvider
-    assert MetadataManager is not None
-    assert RegistryProvider is not None
-    assert UserAuthProvider is not None
-    assert PermissionChecker is not None
+    assert UserAuthenticator is not None
+    assert AuthorizationProvider is not None
+    assert M2MAuthenticator is not None
+    assert OutboundAuthProvider is not None
+    assert OutboundRequestContext is not None
+    assert MetadataRepository is not None
+    assert LLMProviderService is not None
+    assert LLMResolveSpec is not None
+    assert DefaultLLMProviderService is not None
+    assert LLMConfigBackend is not None
+    assert LLMHeaderResolver is not None
+    assert LLMProviderConfig is not None
+    assert SessionRepository is not None
+    assert EvalResultRepository is not None
     assert UserIdentity is not None
     assert callable(match_permission)
-    assert OutboundAuthProvider is not None
+    assert callable(has_broad_permission)
 
 
 def test_create_app_is_callable():
@@ -119,85 +138,26 @@ class TestConfigManagerResolveWithCoercion:
         assert cfg.cors_origins == ["http://a.com", "http://b.com"]
 
 
-class TestRegistryProviderDeprecation:
-    def test_setting_registry_provider_emits_warning(self):
-        from mh_gateway.config import ConfigSchema
+def test_no_legacy_aliases():
+    """Removed symbols must no longer be importable."""
+    import mh_gateway
 
-        state = AppState(settings=ConfigSchema())
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            state.registry_provider = None
-        deprecation_warnings = [
-            w for w in caught if issubclass(w.category, DeprecationWarning)
-        ]
-        assert deprecation_warnings, "expected a DeprecationWarning"
-        msg = str(deprecation_warnings[0].message)
-        assert "registry_provider" in msg
-        assert "management_provider" in msg
-
-    def test_setting_management_provider_does_not_warn(self):
-        from mh_gateway.config import ConfigSchema
-
-        state = AppState(settings=ConfigSchema())
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            state.management_provider = None
-        deprecation_warnings = [
-            w for w in caught if issubclass(w.category, DeprecationWarning)
-        ]
-        assert not deprecation_warnings
-
-    def test_init_does_not_warn(self):
-        from mh_gateway.config import ConfigSchema
-
-        class _StubRegistry:
-            async def get_agent(self, name):
-                return None
-
-            async def list_agents(self):
-                return []
-
-            async def get_tool(self, name):
-                return None
-
-            async def list_tools(self):
-                return []
-
-            async def get_scenario(self, scenario_id):
-                return None
-
-            async def list_scenarios(self):
-                return []
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            AppState(settings=ConfigSchema(), registry_provider=_StubRegistry())
-        deprecation_warnings = [
-            w for w in caught if issubclass(w.category, DeprecationWarning)
-        ]
-        assert not deprecation_warnings
-
-
-@pytest.mark.asyncio
-async def test_warn_unknown_adapter_slots_logs_warning(caplog):
-    from mh_gateway.app import _warn_unknown_adapter_slots
-    from mh_gateway.config import ConfigSchema
-
-    state = AppState(settings=ConfigSchema())
-    state.foo = "typo"  # type: ignore[attr-defined]
-    state.bar = "another typo"  # type: ignore[attr-defined]
-    with caplog.at_level("WARNING", logger="orchestration.app"):
-        _warn_unknown_adapter_slots(state)
-    assert any("foo" in r.message and "bar" in r.message for r in caplog.records)
-
-
-@pytest.mark.asyncio
-async def test_warn_unknown_adapter_slots_silent_for_known(caplog):
-    from mh_gateway.app import _warn_unknown_adapter_slots
-    from mh_gateway.config import ConfigSchema
-
-    state = AppState(settings=ConfigSchema())
-    state.token_verifier = None
-    with caplog.at_level("WARNING", logger="orchestration.app"):
-        _warn_unknown_adapter_slots(state)
-    assert not any("unknown AppState" in r.message for r in caplog.records)
+    legacy = [
+        "AppState",
+        "PermissionChecker",
+        "UserAuthProvider",
+        "M2MAuthProvider",
+        "RegistryProvider",
+        "MetadataManager",
+        "LLMProviderFactory",
+        "LLMProviderRegistry",
+        "LLMProviderStore",
+        "DatabaseProtocol",
+        "SessionStoreProtocol",
+        "EvalResultStorage",
+        "SecretResolver",
+        "LifespanHook",
+        "ExtraHeadersProvider",
+    ]
+    for name in legacy:
+        assert not hasattr(mh_gateway, name), f"{name} should have been removed"

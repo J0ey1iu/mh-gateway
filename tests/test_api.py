@@ -186,17 +186,17 @@ class TestManagementAPI:
         assert resp.json()["status"] == "deleted"
 
     def test_management_api_unauthorized(self, client):
-        original = client.app.state.adapters.token_verifier.verify
-        client.app.state.adapters.token_verifier.verify = AsyncMock(return_value=None)
+        original = client.app.state.adapters.user_auth.verify
+        client.app.state.adapters.user_auth.verify = AsyncMock(return_value=None)
         resp = client.post(
             "/api/v1/management/scenarios", json={"id": "x", "name": "x"}
         )
-        client.app.state.adapters.token_verifier.verify = original
+        client.app.state.adapters.user_auth.verify = original
         assert resp.status_code == 401
 
     def test_management_api_scene_forbidden(self, client, auth_header):
-        original = client.app.state.adapters.permission_checker.check
-        client.app.state.adapters.permission_checker.check = AsyncMock(
+        original = client.app.state.adapters.authorization.check
+        client.app.state.adapters.authorization.check = AsyncMock(
             side_effect=lambda uid, perm: perm != "manage:scene:*"
         )
         try:
@@ -216,29 +216,29 @@ class TestManagementAPI:
             )
             assert resp3.status_code == 403
         finally:
-            client.app.state.adapters.permission_checker.check = original
+            client.app.state.adapters.authorization.check = original
 
     def test_management_api_agent_forbidden(self, client, auth_header):
-        original = client.app.state.adapters.permission_checker.check
-        client.app.state.adapters.permission_checker.check = AsyncMock(
+        original = client.app.state.adapters.authorization.check
+        client.app.state.adapters.authorization.check = AsyncMock(
             side_effect=lambda uid, perm: perm != "manage:agent:*"
         )
         try:
             resp = client.get("/api/v1/management/agents", headers=auth_header)
             assert resp.status_code == 403
         finally:
-            client.app.state.adapters.permission_checker.check = original
+            client.app.state.adapters.authorization.check = original
 
     def test_management_api_tool_forbidden(self, client, auth_header):
-        original = client.app.state.adapters.permission_checker.check
-        client.app.state.adapters.permission_checker.check = AsyncMock(
+        original = client.app.state.adapters.authorization.check
+        client.app.state.adapters.authorization.check = AsyncMock(
             side_effect=lambda uid, perm: perm != "manage:tool:*"
         )
         try:
             resp = client.get("/api/v1/management/tools", headers=auth_header)
             assert resp.status_code == 403
         finally:
-            client.app.state.adapters.permission_checker.check = original
+            client.app.state.adapters.authorization.check = original
 
 
 class TestScenariosAPI:
@@ -252,18 +252,18 @@ class TestScenariosAPI:
         assert "writing" in ids
 
     def test_list_scenarios_unauthorized(self, client):
-        original = client.app.state.adapters.token_verifier.verify
-        client.app.state.adapters.token_verifier.verify = AsyncMock(return_value=None)
+        original = client.app.state.adapters.user_auth.verify
+        client.app.state.adapters.user_auth.verify = AsyncMock(return_value=None)
         resp = client.get("/api/v1/scenarios")
-        client.app.state.adapters.token_verifier.verify = original
+        client.app.state.adapters.user_auth.verify = original
         assert resp.status_code == 401
 
     def test_list_scenarios_no_perms(self, client, auth_header):
-        original = client.app.state.adapters.permission_checker.get_permissions
-        client.app.state.adapters.permission_checker.get_permissions = AsyncMock(
+        original = client.app.state.adapters.authorization.get_permissions
+        client.app.state.adapters.authorization.get_permissions = AsyncMock(
             return_value=["use:scene:nonexistent"]
         )
         resp = client.get("/api/v1/scenarios", headers=auth_header)
-        client.app.state.adapters.permission_checker.get_permissions = original
+        client.app.state.adapters.authorization.get_permissions = original
         assert resp.status_code == 200
         assert resp.json() == []

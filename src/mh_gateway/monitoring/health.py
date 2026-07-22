@@ -4,8 +4,6 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request
 
-from mh_gateway.services.database import get_db_from_request
-
 logger = logging.getLogger("orchestration.health")
 
 health_router = APIRouter(tags=["health"])
@@ -18,9 +16,11 @@ async def health():
 
 @health_router.get("/ready")
 async def ready(request: Request):
+    adapters = getattr(request.app.state, "adapters", None)
+    if adapters is None or not hasattr(adapters, "sessions"):
+        raise HTTPException(status_code=503, detail="Adapters not initialised")
     try:
-        db = get_db_from_request(request)
-        await db.execute("SELECT 1")
+        await adapters.sessions.healthcheck()
     except Exception as e:
         logger.warning("Readiness check failed: %s", e)
         raise HTTPException(status_code=503, detail="Not ready") from e

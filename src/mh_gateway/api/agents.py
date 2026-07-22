@@ -22,7 +22,11 @@ from mh_gateway.api.locale import (
     resolve_description,
     resolve_display_name,
 )
-from mh_gateway.adapters import has_broad_permission, match_permission
+from mh_gateway.adapters import (
+    LLMResolveSpec,
+    has_broad_permission,
+    match_permission,
+)
 from mh_gateway.services.runtime_service import _tool_binding
 
 logger = logging.getLogger("orchestration.agents")
@@ -46,7 +50,7 @@ async def list_agents(
     )
     adapters = request.app.state.adapters
     locale = parse_locale(accept_language)
-    agents = await adapters.management_provider.list_agents()
+    agents = await adapters.metadata.list_agents()
 
     if scenario:
         from mh_gateway.api.scenarios import (
@@ -123,7 +127,7 @@ async def run_agent(
     )
     adapters = request.app.state.adapters
 
-    agent_meta = await adapters.management_provider.get_agent(agent_name)
+    agent_meta = await adapters.metadata.get_agent(agent_name)
     if agent_meta is None:
         raise HTTPException(404, f"Agent '{agent_name}' not found")
 
@@ -139,17 +143,8 @@ async def run_agent(
         if tool_name:
             tool_schemas[tool_name] = func
 
-    batch_get_tools = getattr(adapters.management_provider, "get_tools", None)
-    if batch_get_tools:
-        tools_map = await batch_get_tools(list(tool_schemas))
-    else:
-        tools_map = {}
-        for n in tool_schemas:
-            meta = await adapters.management_provider.get_tool(n)
-            if meta is not None:
-                tools_map[n] = meta
+    tools_map = await adapters.metadata.get_tools(list(tool_schemas))
 
-    outbound_auth_provider = getattr(adapters, "outbound_auth_provider", None)
     for tool_name, tool_meta in tools_map.items():
         if tool_meta is None:
             continue
@@ -163,9 +158,8 @@ async def run_agent(
                 tool_meta,
                 tool_name,
                 request,
-                m2m_auth_provider=adapters.m2m_auth_provider,
                 identity=identity or "",
-                outbound_auth_provider=outbound_auth_provider,
+                outbound_auth=adapters.outbound_auth,
                 verify_agent_tool_ssl=getattr(
                     adapters.settings, "verify_agent_tool_ssl", False
                 ),
@@ -179,17 +173,16 @@ async def run_agent(
                 tool_name,
             )
 
-    llm_provider_registry = getattr(adapters, "llm_provider_registry", None)
-    llm_extra_headers = getattr(adapters, "llm_extra_headers_provider", None)
-
-    def _agent_llm_resolver(meta: AgentMetadata) -> LLMProvider:
-        if llm_provider_registry is not None:
-            cfg: dict = {"model": meta.model}
-            if llm_extra_headers:
-                cfg["_extra_headers_provider"] = llm_extra_headers
-            cfg.update(meta.llm_config)
-            return llm_provider_registry.create(meta.provider, cfg)
-        return adapters.llm_provider_factory()
+    target_meta = AgentMetadata(
+        name=agent_name,
+        agent_type="simple",
+        provider=agent_meta.get("provider", "openai"),
+        model=agent_meta.get("model", ""),
+        llm_config=agent_meta.get("llm_config", {}),
+    )
+    _agent_llm_resolver = adapters.llm.build_resolver(
+        [LLMResolveSpec(agent=target_meta, user=identity or "")]
+    )
 
     factory = DefaultAgentFactory(
         llm_provider_resolver=_agent_llm_resolver,

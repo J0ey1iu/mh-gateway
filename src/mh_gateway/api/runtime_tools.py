@@ -63,12 +63,12 @@ async def discover_agents_execute(
             adapters = request.app.state.adapters
 
             user_perms: list[str] | None = None
-            if adapters.permission_checker:
-                user_perms = await adapters.permission_checker.get_permissions(user_id)
+            if adapters.authorization:
+                user_perms = await adapters.authorization.get_permissions(user_id)
 
             scenario_agent_names: set[str] | None = None
             if scenario_id:
-                scenario_data = await adapters.management_provider.get_scenario(
+                scenario_data = await adapters.metadata.get_scenario(
                     scenario_id
                 )
                 if scenario_data is not None:
@@ -80,7 +80,7 @@ async def discover_agents_execute(
                 else:
                     scenario_agent_names = set()
 
-            agents = await adapters.management_provider.list_agents()
+            agents = await adapters.metadata.list_agents()
             result = []
             for a in agents:
                 name = a["name"]
@@ -151,7 +151,7 @@ async def handoff_execute(
         try:
             adapters = request.app.state.adapters
 
-            agent_meta = await adapters.management_provider.get_agent(target_agent_name)
+            agent_meta = await adapters.metadata.get_agent(target_agent_name)
             if agent_meta is None:
                 yield _sse_line(
                     "error",

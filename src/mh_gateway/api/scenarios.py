@@ -19,12 +19,12 @@ router = APIRouter(prefix="/api/v1/scenarios", tags=["scenarios"])
 
 async def _load_scenarios(request: Request) -> list[dict]:
     adapters = request.app.state.adapters
-    return await adapters.management_provider.list_scenarios()
+    return await adapters.metadata.list_scenarios()
 
 
 async def _get_scenario(request: Request, scenario_id: str) -> dict | None:
     adapters = request.app.state.adapters
-    return await adapters.management_provider.get_scenario(scenario_id)
+    return await adapters.metadata.get_scenario(scenario_id)
 
 
 async def _enrich_agents_for_scenario(
@@ -43,7 +43,7 @@ async def _enrich_agents_for_scenario(
         all_tool_names.update(tools)
 
     # Only fetch agents in this scenario
-    batch_get_agents = getattr(adapters.management_provider, "get_agents", None)
+    batch_get_agents = getattr(adapters.metadata, "get_agents", None)
     if batch_get_agents:
         agents_map = await batch_get_agents(list(scenario_agents))
         agents = [v for v in agents_map.values() if v is not None]
@@ -51,20 +51,20 @@ async def _enrich_agents_for_scenario(
         agents = [
             a
             for a in [
-                await adapters.management_provider.get_agent(name)
+                await adapters.metadata.get_agent(name)
                 for name in scenario_agents
             ]
             if a is not None
         ]
 
     # Only fetch tools referenced by scenario agents
-    batch_get_tools = getattr(adapters.management_provider, "get_tools", None)
+    batch_get_tools = getattr(adapters.metadata, "get_tools", None)
     if batch_get_tools:
         tool_map = await batch_get_tools(list(all_tool_names))
     else:
         tool_map = {}
         for tname in all_tool_names:
-            meta = await adapters.management_provider.get_tool(tname)
+            meta = await adapters.metadata.get_tool(tname)
             if meta is not None:
                 tool_map[tname] = meta
 

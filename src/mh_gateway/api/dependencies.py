@@ -23,13 +23,13 @@ async def get_current_permissions(
 ) -> list[str]:
     """FastAPI Depends-compatible: returns permission list for the current user."""
     adapters = request.app.state.adapters
-    return await adapters.permission_checker.get_permissions(user_id)
+    return await adapters.authorization.get_permissions(user_id)
 
 
 async def verify_m2m_request(request: Request) -> str:
     """FastAPI Depends-compatible: authenticates M2M callers (tools, agent runs)."""
     adapters = request.app.state.adapters
-    app_id = await adapters.m2m_auth_provider.authenticate(request)
+    app_id = await adapters.m2m_auth.authenticate(request)
     if app_id is None:
         raise HTTPException(status_code=401, detail="M2M authentication required")
     return app_id
@@ -50,7 +50,7 @@ async def resolve_m2m_identity(request: Request) -> str:
     in the M2M context as well.
     """
     adapters = request.app.state.adapters
-    app_id = await adapters.m2m_auth_provider.authenticate(request)
+    app_id = await adapters.m2m_auth.authenticate(request)
     if app_id is None:
         raise HTTPException(status_code=401, detail="M2M authentication required")
 
@@ -85,7 +85,7 @@ def require_permission(permission: str):
         user_id: str = Depends(get_current_user),
     ) -> str:
         adapters = request.app.state.adapters
-        ok = await adapters.permission_checker.check(user_id, permission)
+        ok = await adapters.authorization.check(user_id, permission)
         if not ok:
             raise HTTPException(
                 status_code=403,
@@ -107,7 +107,7 @@ async def resolve_request_identity(request: Request) -> str:
     except HTTPException:
         pass
     adapters = request.app.state.adapters
-    app_id = await adapters.m2m_auth_provider.authenticate(request)
+    app_id = await adapters.m2m_auth.authenticate(request)
     if app_id is None:
         raise HTTPException(status_code=401, detail="Authentication required")
     return app_id
@@ -119,4 +119,4 @@ async def resolve_request_permissions(
 ) -> list[str]:
     """Get permissions for the resolved identity (user or M2M app)."""
     adapters = request.app.state.adapters
-    return await adapters.permission_checker.get_permissions(identity)
+    return await adapters.authorization.get_permissions(identity)

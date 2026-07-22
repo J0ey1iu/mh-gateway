@@ -5,13 +5,13 @@ from typing import Any
 from minimal_harness.agent.middleware import Middleware
 from minimal_harness.types import ToolCall
 
-from mh_gateway.adapters import PermissionChecker, match_permission
+from mh_gateway.adapters import AuthorizationProvider, match_permission
 
 
 class PermissionMiddleware(Middleware):
-    def __init__(self, user_id: str, permission_checker: PermissionChecker) -> None:
+    def __init__(self, user_id: str, authorization: AuthorizationProvider) -> None:
         self._user_id = user_id
-        self._permission_checker = permission_checker
+        self._authorization = authorization
         self._user_perms: list[str] | None = None
 
     async def should_allow_tool(
@@ -22,7 +22,7 @@ class PermissionMiddleware(Middleware):
 
         # Lazy-load permissions on first tool call (avoids blocking constructor)
         if self._user_perms is None:
-            self._user_perms = await self._permission_checker.get_permissions(
+            self._user_perms = await self._authorization.get_permissions(
                 self._user_id
             )
 
@@ -30,7 +30,7 @@ class PermissionMiddleware(Middleware):
             return True
 
         # Fallback: dynamic permission check for time-sensitive permissions
-        allowed = await self._permission_checker.check(self._user_id, required_perm)
+        allowed = await self._authorization.check(self._user_id, required_perm)
         if not allowed:
             return f"Permission denied: missing {required_perm}"
         return True

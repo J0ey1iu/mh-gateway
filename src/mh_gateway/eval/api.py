@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from mh_gateway.api.dependencies import verify_m2m_request
 from mh_gateway.eval.runner import run_batch_eval
-from mh_gateway.adapters import EvalResultStorage
+from mh_gateway.adapters import EvalResultRepository
 from mh_gateway.eval.types import (
     BatchEvalRequest,
     EvalQuestion,
@@ -36,17 +36,17 @@ class BatchEvalRequestSchema(BaseModel):
     max_concurrency: int = 4
 
 
-def _get_storage(request: Request) -> EvalResultStorage:
-    storage = getattr(request.app.state.adapters, "eval_result_storage", None)
+def _get_storage(request: Request) -> EvalResultRepository:
+    storage = getattr(request.app.state.adapters, "eval_results", None)
     if storage is None:
         raise HTTPException(
             status_code=501,
-            detail="No EvalResultStorage adapter configured",
+            detail="No EvalResultRepository adapter configured",
         )
-    if not isinstance(storage, EvalResultStorage):
+    if not isinstance(storage, EvalResultRepository):
         raise HTTPException(
             status_code=500,
-            detail="Configured eval_result_storage does not implement EvalResultStorage",
+            detail="Configured eval_results does not implement EvalResultRepository",
         )
     return storage
 

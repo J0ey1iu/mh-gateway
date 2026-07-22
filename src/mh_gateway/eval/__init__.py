@@ -1,4 +1,3 @@
-from mh_gateway.adapters import EvalResultStorage
 from mh_gateway.eval.api import router
 from mh_gateway.eval.types import (
     BatchEvalRequest,
@@ -12,7 +11,6 @@ __all__ = (
     "BatchEvalRequest",
     "BatchSummary",
     "EvalQuestion",
-    "EvalResultStorage",
     "LLMCallRecord",
     "QuestionResult",
     "router",

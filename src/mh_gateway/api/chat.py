@@ -14,7 +14,7 @@ from mh_gateway.api.dependencies import (
     resolve_request_permissions,
 )
 from mh_gateway.api.locale import parse_locale
-from mh_gateway.adapters import SessionStoreProtocol, match_permission
+from mh_gateway.adapters import SessionRepository, match_permission
 from mh_gateway.context import get_current_trace_id
 from mh_gateway.services.database import get_session_store
 from mh_gateway.services.runtime_service import (
@@ -151,7 +151,7 @@ async def _stream_events(
     memory_id: str,
     agent_name: str,
     tool_names: list[str],
-    store: SessionStoreProtocol,
+    store: SessionRepository,
     locale: str = "",
     scenario_id: str = "",
     trace_id: str = "",
