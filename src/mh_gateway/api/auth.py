@@ -22,7 +22,7 @@ async def get_user_id(request: Request) -> str:
     if cached is not None:
         return cached
     adapters = request.app.state.adapters
-    identity = await adapters.token_verifier.verify(request)
+    identity = await adapters.user_auth.verify(request)
     if identity is None:
         raise HTTPException(status_code=401, detail="Authentication required")
     if not identity.user_id:

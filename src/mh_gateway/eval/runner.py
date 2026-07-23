@@ -10,7 +10,7 @@ from fastapi import Request
 from minimal_harness.agent.middleware import Middleware
 from minimal_harness.types import AgentEnd, AgentMetadata, LLMEnd, ToolCall
 
-from mh_gateway.adapters import EvalResultStorage
+from mh_gateway.adapters import EvalResultRepository
 from mh_gateway.eval.types import (
     BatchEvalRequest,
     BatchSummary,
@@ -71,9 +71,9 @@ class LLMCaptureMiddleware(Middleware):
 
 
 async def _resolve_agent_tools(
-    management_provider: Any, scenario_id: str, agent_name: str
+    metadata: Any, scenario_id: str, agent_name: str
 ) -> list[str]:
-    scenarios = await management_provider.list_scenarios()
+    scenarios = await metadata.list_scenarios()
     scenario = next((s for s in scenarios if s["id"] == scenario_id), None)
     if scenario is None:
         raise ValueError(f"Scenario '{scenario_id}' not found")
@@ -87,7 +87,7 @@ async def run_batch_eval(
     request: Request,
     user_id: str,
     batch_request: BatchEvalRequest,
-    storage: EvalResultStorage,
+    storage: EvalResultRepository,
     batch_id: str,
 ) -> BatchSummary:
     adapters = request.app.state.adapters
@@ -127,7 +127,7 @@ async def run_batch_eval(
                     result.status = "interrupted"
                 else:
                     tool_names = await _resolve_agent_tools(
-                        adapters.management_provider,
+                        adapters.metadata,
                         question.scenario_id,
                         question.agent_name,
                     )
@@ -137,10 +137,8 @@ async def run_batch_eval(
                     )
 
                     session_id = f"eval_{batch_id}_{question.question_id}"
-                    store = await get_session_store()
-                    agent_meta = await adapters.management_provider.get_agent(
-                        question.agent_name
-                    )
+                    store = await get_session_store(request)
+                    agent_meta = await adapters.metadata.get_agent(question.agent_name)
                     await store.create_session(
                         session_id=session_id,
                         agent_name=question.agent_name,

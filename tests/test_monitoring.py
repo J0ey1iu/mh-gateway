@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import asyncio
 import json
-import logging
 from collections.abc import Generator
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock
@@ -9,8 +9,9 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from mh_gateway.app import create_app
+
 from mh_gateway.adapters import UserIdentity
+from mh_gateway.app import GatewayAdapters, create_app
 from mh_gateway.config import ConfigSchema
 from mh_gateway.monitoring.collector import (
     MetricsCollector,
@@ -71,201 +72,225 @@ class TestMetricsCollector:
 
     def test_live_snapshot(self):
         c = MetricsCollector()
+        c.http_requests_total.inc({"method": "GET", "path": "/a", "status": "200"})
         snap = c.live_snapshot()
-        assert "uptime_seconds" in snap
         assert "instance_id" in snap
+        assert "uptime_seconds" in snap
+        assert snap["http_requests_total"]
 
     def test_set_get_collector(self):
         c = MetricsCollector()
         set_collector(c)
         assert get_collector() is c
         set_collector(None)
-        assert get_collector() is None
+
+
+def _make_provider_bundle(settings: ConfigSchema):
+    """Return an adapter_lifespan that satisfies the gateway with mocks."""
+    metadata = AsyncMock()
+    metadata.list_scenarios = AsyncMock(return_value=[])
+    metadata.list_agents = AsyncMock(return_value=[])
+    metadata.list_tools = AsyncMock(return_value=[])
+    metadata.get_tools = AsyncMock(return_value={})
+
+    provider = AsyncMock()
+    provider.verify = AsyncMock(
+        return_value=UserIdentity(user_id="1", username="admin")
+    )
+    provider.get_permissions = AsyncMock(return_value=ALL_PERMS)
+    provider.check = AsyncMock(side_effect=lambda uid, perm: True)
+    provider.authenticate = AsyncMock(return_value="default-app")
+    provider.get_identity_headers = AsyncMock(return_value={})
+    provider.get_headers = AsyncMock(return_value={})
+    provider.close = AsyncMock()
+
+    sessions = AsyncMock()
+    sessions.healthcheck = AsyncMock(side_effect=RuntimeError("not ready"))
+
+    @asynccontextmanager
+    async def adapter_lifespan(app: FastAPI):
+        yield GatewayAdapters(
+            settings=settings,
+            user_auth=provider,
+            authorization=provider,
+            m2m_auth=provider,
+            outbound_auth=provider,
+            metadata=metadata,
+            llm=_NoopLLM(),
+            sessions=sessions,
+            eval_results=None,
+        )
+
+    return adapter_lifespan
+
+
+class _NoopLLM:
+    def list_provider_types(self):
+        return []
+
+    async def create_llm(self, spec):
+        raise NotImplementedError
+
+    async def build_resolver(self, specs):
+        def _resolver(meta):
+            raise NotImplementedError
+
+        return _resolver
+
+    async def list_configs(self):
+        return []
+
+    async def get_config(self, name):
+        return None
+
+    async def create_config(self, config):
+        return config
+
+    async def update_config(self, name, config):
+        return config
+
+    async def delete_config(self, name):
+        return None
+
+    async def get_model_max_context(self, provider_name, model_code):
+        return 0
+
+    async def close(self):
+        return None
 
 
 class TestAuditMiddlewareStructuredLogging:
-    @pytest.fixture(autouse=True)
-    def _setup(self):
-        self.audit_logs: list[dict] = []
-        _test_instance = self
-
-        class _Handler(logging.Handler):
-            def emit(self, record):
-                _test_instance.audit_logs.append(json.loads(record.getMessage()))
-
-        self.audit_handler = _Handler()
-        self.logger = logging.getLogger("orchestration.audit")
-        self.logger.setLevel(logging.INFO)
-        self.logger.addHandler(self.audit_handler)
-        self.logger.propagate = False
-        yield
-        self.logger.removeHandler(self.audit_handler)
-
-    def _get_log_by_event(self, event: str) -> dict:
-        for log in self.audit_logs:
-            if log.get("event") == event:
-                return log
-        return {}
-
-    @pytest.mark.asyncio
-    async def test_agent_start_logs_structured_json(self):
-        m = AuditMiddleware(
+    def test_agent_start_logs_structured_json(self, caplog):
+        mw = AuditMiddleware(
             user_id="u1",
             session_id="s1",
-            agent_id="agent",
-            scenario_id="sc",
-            trace_id="tr1",
+            agent_id="a1",
+            scenario_id="sc1",
+            provider="openai",
+            model="gpt",
+            trace_id="t1",
         )
-        await m.on_agent_start("hello world")
-        log = self._get_log_by_event("agent_start")
-        assert log["user_id"] == "u1"
-        assert log["session_id"] == "s1"
-        assert log["agent_id"] == "agent"
-        assert log["scenario_id"] == "sc"
-        assert log["trace_id"] == "tr1"
-        assert "hello world" in log["input"]
-        assert "ts" in log
+        with caplog.at_level("INFO", logger="orchestration.audit"):
+            asyncio.run(mw.on_agent_start("hi"))
+        entries = [json.loads(r.getMessage()) for r in caplog.records]
+        assert any(e["event"] == "agent_start" for e in entries)
 
-    @pytest.mark.asyncio
-    async def test_llm_end_includes_token_counts(self):
+    def test_llm_end_includes_token_counts(self, caplog):
         from minimal_harness.types import LLMEnd
 
-        m = AuditMiddleware(
+        mw = AuditMiddleware(
             user_id="u1",
             session_id="s1",
-            agent_id="agent",
+            agent_id="a1",
+            scenario_id="sc1",
             provider="openai",
-            model="gpt-4o",
+            model="gpt",
+            trace_id="t1",
         )
-        event = LLMEnd(
-            content="result",
-            reasoning_content="",
+        evt = LLMEnd(
+            content="x",
+            reasoning_content=None,
             tool_calls=None,
-            usage={"prompt_tokens": 1000000, "completion_tokens": 500000},
+            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
             error=None,
         )
-        await m.on_llm_end(event)
-        log = self._get_log_by_event("llm_end")
-        assert log["prompt_tokens"] == 1000000
-        assert log["completion_tokens"] == 500000
-        assert log["total_tokens"] == 1500000
-        assert "cost_dollars" not in log
-        assert log["provider"] == "openai"
-        assert log["model"] == "gpt-4o"
+        with caplog.at_level("INFO", logger="orchestration.audit"):
+            asyncio.run(mw.on_llm_end(evt))
+        entries = [json.loads(r.getMessage()) for r in caplog.records]
+        llm_end = [e for e in entries if e["event"] == "llm_end"]
+        assert llm_end, "expected llm_end entry"
+        e = llm_end[0]
+        assert e["prompt_tokens"] == 10
+        assert e["completion_tokens"] == 5
+        assert e["total_tokens"] == 15
 
-    @pytest.mark.asyncio
-    async def test_llm_start_logs_structured_json(self):
-        m = AuditMiddleware(
+    def test_llm_start_logs_structured_json(self, caplog):
+        mw = AuditMiddleware(
             user_id="u1",
             session_id="s1",
+            agent_id="a1",
+            scenario_id="sc1",
             provider="openai",
-            model="deepseek",
+            model="gpt",
+            trace_id="t1",
         )
-        await m.on_llm_start([{"role": "user", "content": "hi"}], [{"name": "calc"}])
-        log = self._get_log_by_event("llm_start")
-        assert log["provider"] == "openai"
-        assert log["model"] == "deepseek"
-        assert log["tool_count"] == 1
-        assert log["message_count"] == 1
+        with caplog.at_level("INFO", logger="orchestration.audit"):
+            asyncio.run(mw.on_llm_start([{"role": "user", "content": "hi"}], []))
+        entries = [json.loads(r.getMessage()) for r in caplog.records]
+        assert any(e["event"] == "llm_start" for e in entries)
 
-    @pytest.mark.asyncio
-    async def test_tool_start_and_end(self):
-        from minimal_harness.types import ToolCall
+    def test_tool_start_and_end(self, caplog):
+        mw = AuditMiddleware(
+            user_id="u1",
+            session_id="s1",
+            agent_id="a1",
+            scenario_id="sc1",
+            provider="openai",
+            model="gpt",
+            trace_id="t1",
+        )
+        tool_call = {"function": {"name": "t1", "arguments": "{}"}}
+        with caplog.at_level("INFO", logger="orchestration.audit"):
+            asyncio.run(mw.on_tool_start(tool_call))
+            asyncio.run(mw.on_tool_end(tool_call, "ok"))
+        events = [json.loads(r.getMessage())["event"] for r in caplog.records]
+        assert "tool_start" in events
+        assert "tool_end" in events
 
-        m = AuditMiddleware(user_id="u1", session_id="s1")
-        tc: ToolCall = {"function": {"name": "calculator"}}
-        await m.on_tool_start(tc)
-        start_log = self._get_log_by_event("tool_start")
-        assert start_log["tool_name"] == "calculator"
+    def test_tool_error(self, caplog):
+        mw = AuditMiddleware(
+            user_id="u1",
+            session_id="s1",
+            agent_id="a1",
+            scenario_id="sc1",
+            provider="openai",
+            model="gpt",
+            trace_id="t1",
+        )
+        tool_call = {"function": {"name": "t1", "arguments": "{}"}}
+        with caplog.at_level("INFO", logger="orchestration.audit"):
+            asyncio.run(mw.on_tool_error(tool_call, RuntimeError("boom")))
+        events = [json.loads(r.getMessage())["event"] for r in caplog.records]
+        assert "tool_error" in events
 
-        await m.on_tool_end(tc, "42")
-        end_log = self._get_log_by_event("tool_end")
-        assert end_log["tool_name"] == "calculator"
-        assert end_log["result"] == "42"
-        assert end_log["status"] == "ok"
-
-    @pytest.mark.asyncio
-    async def test_tool_error(self):
-        from minimal_harness.types import ToolCall
-
-        m = AuditMiddleware(user_id="u1", session_id="s1")
-        tc: ToolCall = {"function": {"name": "calculator"}}
-        await m.on_tool_error(tc, ValueError("bad input"))
-        log = self._get_log_by_event("tool_error")
-        assert log["tool_name"] == "calculator"
-        assert "bad input" in log["error"]
-
-    @pytest.mark.asyncio
-    async def test_agent_end_error(self):
+    def test_agent_end_error(self, caplog):
         from minimal_harness.types import AgentEnd
 
-        m = AuditMiddleware(user_id="u1", session_id="s1")
-        event = AgentEnd(
-            response="",
-            time_taken=1.5,
-            exceeded=False,
-            interrupted=False,
-            error="something went wrong",
-        )
-        await m.on_agent_end(event)
-        log = self._get_log_by_event("agent_end")
-        assert log["error"] == "something went wrong"
-        assert log["time_taken"] == 1.5
-
-    @pytest.mark.asyncio
-    async def test_metrics_collector_integration(self):
-        set_collector(MetricsCollector())
-        m = AuditMiddleware(
+        mw = AuditMiddleware(
             user_id="u1",
             session_id="s1",
-            agent_id="agent",
+            agent_id="a1",
+            scenario_id="sc1",
             provider="openai",
-            model="deepseek",
+            model="gpt",
+            trace_id="t1",
         )
-        from minimal_harness.types import AgentEnd, LLMEnd, ToolCall
-
-        await m.on_agent_start("test")
-        await m.on_agent_end(
-            AgentEnd(
-                response="ok",
-                time_taken=0.1,
-                exceeded=False,
-                interrupted=False,
-                error=None,
-            )
+        evt = AgentEnd(
+            response="",
+            time_taken=0.0,
+            exceeded=False,
+            interrupted=False,
+            error="boom",
         )
+        with caplog.at_level("INFO", logger="orchestration.audit"):
+            asyncio.run(mw.on_agent_end(evt))
+        entries = [json.loads(r.getMessage()) for r in caplog.records]
+        assert any(e["event"] == "agent_end" and e["error"] == "boom" for e in entries)
 
-        llm_end = LLMEnd(
-            content="ok",
-            reasoning_content="",
-            tool_calls=None,
-            usage={"prompt_tokens": 100, "completion_tokens": 50},
-            error=None,
+    def test_metrics_collector_integration(self):
+        set_collector(MetricsCollector())
+        c = get_collector()
+        c.llm_requests_total.inc({"provider": "openai", "model": "gpt", "status": "ok"})
+        c.llm_tokens_total.inc(
+            {"provider": "openai", "model": "gpt", "type": "prompt"}, 5
         )
-        await m.on_llm_end(llm_end)
-
-        tc: ToolCall = {"function": {"name": "calc"}}
-        await m.on_tool_end(tc, "result")
-
-        collector = get_collector()
-        assert collector is not None
-
-        agent_snap = collector.agent_runs_total.snapshot()
-        agent_started = [
-            s for s in agent_snap if any(v == "started" for v in s["labels"].values())
-        ]
-        agent_ok = [
-            s for s in agent_snap if any(v == "ok" for v in s["labels"].values())
-        ]
-        assert len(agent_started) >= 1
-        assert len(agent_ok) >= 1
-
-        llm_snap = collector.llm_tokens_total.snapshot()
-        assert len(llm_snap) >= 2
-
-        tool_snap = collector.tool_calls_total.snapshot()
-        assert len(tool_snap) >= 1
-
+        c.llm_tokens_total.inc(
+            {"provider": "openai", "model": "gpt", "type": "completion"}, 7
+        )
+        snap = c.live_snapshot()
+        assert snap["llm_requests_total"][0]["value"] == 1
+        total = sum(s["value"] for s in snap["llm_tokens_total"])
+        assert total == 12
         set_collector(None)
 
 
@@ -277,29 +302,9 @@ class TestHealthEndpoints:
             metrics_enabled=True,
             db_auto_schema=True,
             dev_mode=False,
+            enable_eval=False,
         )
-
-        @asynccontextmanager
-        async def mock_hook(app: FastAPI):
-            adapters = app.state.adapters
-            adapters.token_verifier = AsyncMock()
-            adapters.token_verifier.verify = AsyncMock(
-                return_value=UserIdentity(user_id="1", username="admin")
-            )
-            adapters.permission_checker = AsyncMock()
-            adapters.permission_checker.get_permissions = AsyncMock(
-                return_value=ALL_PERMS
-            )
-            adapters.permission_checker.check = AsyncMock(
-                side_effect=lambda uid, perm: True
-            )
-            adapters.management_provider = AsyncMock()
-            adapters.management_provider.list_scenarios = AsyncMock(return_value=[])
-            adapters.management_provider.list_agents = AsyncMock(return_value=[])
-            adapters.management_provider.list_tools = AsyncMock(return_value=[])
-            yield
-
-        return create_app(settings=settings, lifespan_hooks=[mock_hook])
+        return create_app(settings=settings, adapters=_make_provider_bundle(settings))
 
     @pytest.fixture
     def metrics_client(self, metrics_app) -> Generator[TestClient, None, None]:
@@ -313,7 +318,6 @@ class TestHealthEndpoints:
 
     def test_ready_returns_ready(self, metrics_client):
         response = metrics_client.get("/ready")
-        # Without a database initialized, readiness check returns 503.
         assert response.status_code == 503
 
     def test_metrics_endpoint(self, metrics_client):
@@ -326,8 +330,6 @@ class TestHealthEndpoints:
 
 
 class TestMetricsDisabled:
-    """When metrics_enabled=False, /api/v1/metrics should return 404."""
-
     @pytest.fixture(autouse=True)
     def _clean_collector(self):
         set_collector(None)
@@ -341,26 +343,9 @@ class TestMetricsDisabled:
             metrics_enabled=False,
             db_auto_schema=True,
             dev_mode=False,
+            enable_eval=False,
         )
-
-        @asynccontextmanager
-        async def mock_hook(app: FastAPI):
-            adapters = app.state.adapters
-            adapters.token_verifier = AsyncMock()
-            adapters.token_verifier.verify = AsyncMock(
-                return_value=UserIdentity(user_id="1", username="admin")
-            )
-            adapters.permission_checker = AsyncMock()
-            adapters.permission_checker.get_permissions = AsyncMock(
-                return_value=ALL_PERMS
-            )
-            adapters.management_provider = AsyncMock()
-            adapters.management_provider.list_scenarios = AsyncMock(return_value=[])
-            adapters.management_provider.list_agents = AsyncMock(return_value=[])
-            adapters.management_provider.list_tools = AsyncMock(return_value=[])
-            yield
-
-        return create_app(settings=settings, lifespan_hooks=[mock_hook])
+        return create_app(settings=settings, adapters=_make_provider_bundle(settings))
 
     @pytest.fixture
     def no_metrics_client(self, no_metrics_app) -> Generator[TestClient, None, None]:

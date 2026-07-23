@@ -1,21 +1,45 @@
+"""FastAPI app construction and adapter bundle wiring.
+
+The gateway owns no concrete adapter.  Deployers supply an
+*adapter lifespan* that returns a fully constructed
+:class:`GatewayAdapters` instance, and :func:`create_app` weaves it
+into the request lifecycle.
+
+Compared to the previous 13-slot ``AppState`` design, this version
+collapses everything into a single immutable bundle, a single
+lifespan entry point, and one global ``get_collectors()`` accessor
+for the metrics collector.
+"""
+
 from __future__ import annotations
 
 import logging
-import warnings
-from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
-from fastapi import APIRouter, FastAPI
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from mh_service_kit.logging_setup import setup_service_logging
-from minimal_harness.types import ExtraHeadersProvider
-from starlette.responses import FileResponse
 
-from mh_gateway.api.component_sources import component_sources_router
+from mh_gateway.adapters import (
+    AuthorizationProvider,
+    EvalResultRepository,
+    LLMProviderService,
+    M2MAuthenticator,
+    MetadataRepository,
+    OutboundAuthProvider,
+    SessionRepository,
+    ToolScriptStore,
+    UserAuthenticator,
+)
 from mh_gateway.api.router import router
+from mh_gateway.api.component_sources import component_sources_router
 from mh_gateway.config import ConfigSchema
+from mh_gateway.config_manager import setup_service_logging
 from mh_gateway.context import (
     clear_current_user_id,
     ensure_trace_id,
@@ -26,110 +50,61 @@ from mh_gateway.context import (
 )
 from mh_gateway.monitoring.middleware import AccessLogMiddleware
 
-logger = logging.getLogger("orchestration.app")
+__all__ = [
+    "GatewayAdapters",
+    "AdapterLifespan",
+    "create_app",
+]
 
 
-LifespanHook = Callable[[FastAPI], AbstractAsyncContextManager[None]]
-"""生命周期钩子类型。
-
-接收 FastAPI app，以 async generator 形式执行初始化和清理。
-用法::
-
-    @asynccontextmanager
-    async def my_hook(app: FastAPI):
-        cfg = await my_config_mgr.resolve(MyCfg, prefix="MY")
-        app.state.adapters.registry_provider = MyRegistryProvider(cfg)
-        yield
-        await app.state.adapters.registry_provider.close()
-"""
+# ── Public bundle ─────────────────────────────────────────────────────────────
 
 
-class AppState:
-    """Holder for adapter instances, attached to app.state.adapters."""
+@dataclass(frozen=True, slots=True)
+class GatewayAdapters:
+    """Immutable bundle of all gateway adapters.
 
-    def __init__(
-        self,
-        settings: ConfigSchema,
-        token_verifier: Any | None = None,
-        permission_checker: Any | None = None,
-        registry_provider: Any | None = None,
-        management_provider: Any | None = None,
-        llm_provider_factory: Any | None = None,
-        outbound_auth_provider: Any | None = None,
-        m2m_auth_provider: Any | None = None,
-        llm_extra_headers_provider: Any | None = None,
-        llm_provider_registry: Any | None = None,
-        llm_provider_store: Any | None = None,
-        database_provider: Any | None = None,
-        session_store_provider: Any | None = None,
-    ) -> None:
-        object.__setattr__(self, "_initialized", False)
-        self.settings = settings
-        self.token_verifier = token_verifier
-        self.permission_checker = permission_checker
-        self.registry_provider = registry_provider
-        self.management_provider = management_provider
-        self.llm_provider_store = llm_provider_store
-        self.llm_provider_factory = llm_provider_factory
-        self.outbound_auth_provider = outbound_auth_provider
-        self.m2m_auth_provider = m2m_auth_provider
-        self.llm_extra_headers_provider = llm_extra_headers_provider
-        self.llm_provider_registry = llm_provider_registry
-        self.eval_result_storage = None
-        self.database_provider = database_provider
-        self.session_store_provider = session_store_provider
-        object.__setattr__(self, "_initialized", True)
+    Built once during application startup by an
+    :data:`AdapterLifespan` and exposed to route handlers through
+    ``app.state.adapters``.  Field names are stable; downstream code
+    may rely on the dataclass attribute names.
 
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name == "registry_provider" and getattr(self, "_initialized", False):
-            warnings.warn(
-                "AppState.registry_provider is deprecated; "
-                "use AppState.management_provider instead. "
-                "The 'registry_provider' slot remains available for backward "
-                "compatibility but will be removed in a future major release.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        object.__setattr__(self, name, value)
-
-
-_KNOWN_ADAPTER_SLOTS: frozenset[str] = frozenset(
-    {
-        "settings",
-        "token_verifier",
-        "permission_checker",
-        "registry_provider",
-        "management_provider",
-        "llm_provider_store",
-        "llm_provider_factory",
-        "outbound_auth_provider",
-        "m2m_auth_provider",
-        "llm_extra_headers_provider",
-        "llm_provider_registry",
-        "eval_result_storage",
-        "database_provider",
-        "session_store_provider",
-        "_initialized",
-    }
-)
-
-
-def _warn_unknown_adapter_slots(state: AppState) -> None:
-    """Warn if a LifespanHook set an attribute that is not a known adapter slot.
-
-    Catches typos like ``app.state.adapters.management_providers = MyXxx``
-    that would otherwise be silently dropped (no runtime error, but the
-    adapter is never picked up by the framework).
+    :class:`EvalResultRepository` is optional only when the
+    deployment disables the eval feature via
+    ``settings.enable_eval=False``.
     """
-    unknown = [attr for attr in state.__dict__ if attr not in _KNOWN_ADAPTER_SLOTS]
-    if unknown:
-        logger.warning(
-            "LifespanHook set unknown AppState attribute(s): %s. "
-            "Known slots: %s. "
-            "This is usually a typo — the attribute is ignored by the framework.",
-            sorted(unknown),
-            sorted(_KNOWN_ADAPTER_SLOTS),
-        )
+
+    settings: ConfigSchema
+    user_auth: UserAuthenticator
+    authorization: AuthorizationProvider
+    m2m_auth: M2MAuthenticator
+    outbound_auth: OutboundAuthProvider
+    metadata: MetadataRepository
+    llm: LLMProviderService
+    sessions: SessionRepository
+    eval_results: EvalResultRepository | None = None
+    tool_script_store: ToolScriptStore | None = None
+
+
+class AdapterLifespan(Protocol):
+    """Async context manager that produces a :class:`GatewayAdapters`.
+
+    Implementations typically wrap construction, async init
+    (database connections, file locks, …) and teardown.  The
+    function is called exactly once per :func:`create_app` invocation
+    during FastAPI's ``lifespan`` event.
+    """
+
+    def __call__(
+        self, app: FastAPI
+    ) -> "AbstractAsyncContextManager[GatewayAdapters]": ...
+
+
+# Re-export for typing convenience
+from contextlib import AbstractAsyncContextManager  # noqa: E402
+
+
+# ── Tag metadata ──────────────────────────────────────────────────────────────
 
 
 TAGS_METADATA = [
@@ -179,7 +154,7 @@ TAGS_METADATA = [
     },
     {
         "name": "health",
-        "description": "健康检查与就绪检查。`/health` 返回服务存活状态，`/ready` 检查数据库连接可用性。",
+        "description": "健康检查与就绪检查。`/health` 返回服务存活状态，`/ready` 检查 Session 存储可用性。",
     },
     {
         "name": "metrics",
@@ -214,78 +189,42 @@ Orchestration Gateway — 一个基于 [minimal-harness](https://github.com/anom
 
 ## 适配层架构
 
-所有外部依赖（认证、权限、注册中心、LLM Provider 等）通过 LifespanHook 接口注入，
+所有外部依赖（认证、权限、注册中心、LLM Provider 等）通过
+``AdapterLifespan`` 接口注入为一个不可变的 :class:`GatewayAdapters`，
 方便企业部署时对接自有的 SSO、配置中心、密钥管理系统。
 """
+
+
+# ── create_app ────────────────────────────────────────────────────────────────
 
 
 def create_app(
     *,
     settings: ConfigSchema,
-    logger: logging.Logger | None = None,
-    token_verifier: LifespanHook | None = None,
-    permission_checker: LifespanHook | None = None,
-    management_provider: LifespanHook | None = None,
-    llm_provider_factory: LifespanHook | None = None,
-    outbound_auth_provider: LifespanHook | None = None,
-    m2m_auth_provider: LifespanHook | None = None,
-    llm_extra_headers_provider: ExtraHeadersProvider | None = None,
-    llm_provider_registry: LifespanHook | None = None,
-    llm_provider_store: LifespanHook | None = None,
-    eval_result_storage: LifespanHook | None = None,
-    database_provider: LifespanHook | None = None,
-    session_store_provider: LifespanHook | None = None,
-    lifespan_hooks: list[LifespanHook] | None = None,
-    dev_routers: list[APIRouter] | None = None,
+    adapters: AdapterLifespan,
+    lifespan_hooks: Sequence[Callable[[FastAPI], AbstractAsyncContextManager[None]]]
+    | None = None,
+    dev_routers: list[Any] | None = None,
 ) -> FastAPI:
     """Create a configured FastAPI app for the orchestration service.
 
-    All adapters are initialized inside the FastAPI ``lifespan``:
-
-    1. Built-in defaults are filled for every adapter slot.
-    2. Named per-adapter hooks run in order (e.g. ``token_verifier``).
-       Each hook receives the app with ``app.state.adapters`` already
-       populated with defaults, and can override its slot.
-    3. Generic ``lifespan_hooks`` run next, for cross-cutting concerns.
-    4. Database is initialized.
-    5. Application serves requests.
-    6. On shutdown, hooks clean up in reverse order, then built-in
-       adapters are closed.
-
-    Args:
-        settings: 已解析的框架配置（由 ConfigManager.resolve() 或手动构建）。
-        logger: （已弃用）自定义 logger。请改为在调用 ``create_app()``
-            之前自行配置 ``logging.getLogger()``（root logger）。
-        token_verifier: 认证适配器 hook。
-        permission_checker: 权限校验适配器 hook。
-        management_provider: 统一数据管理适配器 hook。
-        llm_provider_factory: LLM provider 工厂 hook。
-        outbound_auth_provider: 出站认证适配器 hook。
-        m2m_auth_provider: 机机接口鉴权适配器 hook。
-        llm_extra_headers_provider: LLM 额外 HTTP 头回调，可动态返回
-            headers 字典（如 ``x-reasoning-format``）。
-        llm_provider_registry: LLM provider 注册表 hook。
-            用于自定义 provider 注册（per-agent provider 选择）。
-        database_provider: 数据库适配器 hook。
-        session_store_provider: Session 存储适配器 hook。
-        lifespan_hooks: 通用生命周期钩子，在 per-adapter hooks 之后执行。
+    :param settings: 已解析的框架配置（由 ``ConfigManager.resolve()``
+        或手动构建）。
+    :param adapters: An async context manager factory that returns a
+        :class:`GatewayAdapters` once the deployment's connectors are
+        initialised.  It is entered during FastAPI's ``lifespan``
+        startup and closed on shutdown.
+    :param lifespan_hooks: Optional extra lifespan hooks, executed
+        after the adapter lifespan.  Useful for cross-cutting
+        concerns that need a startup/shutdown boundary but are not
+        part of the adapter bundle.
+    :param dev_routers: Routers mounted only when ``settings.dev_mode``
+        is true (e.g. mock login).
     """
-    if logger is not None:
-        warnings.warn(
-            "create_app(logger=...) is deprecated. "
-            "Configure logging.getLogger() (root logger) before calling create_app() instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-    setup_service_logging()
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI):
-        state = AppState(
-            settings=settings,
-            llm_extra_headers_provider=llm_extra_headers_provider,
-        )
-        app.state.adapters = state
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        setup_service_logging()
 
         if settings.metrics_enabled:
             from mh_gateway.monitoring.collector import (
@@ -301,37 +240,19 @@ def create_app(
                 settings.metrics_push_interval,
             )
 
-        async with AsyncExitStack() as stack:
-            if token_verifier is not None:
-                await stack.enter_async_context(token_verifier(app))
-            if permission_checker is not None:
-                await stack.enter_async_context(permission_checker(app))
-            if management_provider is not None:
-                await stack.enter_async_context(management_provider(app))
-            if llm_provider_factory is not None:
-                await stack.enter_async_context(llm_provider_factory(app))
-            if llm_provider_registry is not None:
-                await stack.enter_async_context(llm_provider_registry(app))
-            if outbound_auth_provider is not None:
-                await stack.enter_async_context(outbound_auth_provider(app))
-            if m2m_auth_provider is not None:
-                await stack.enter_async_context(m2m_auth_provider(app))
-            if llm_provider_store is not None:
-                await stack.enter_async_context(llm_provider_store(app))
-
-            if eval_result_storage is not None:
-                await stack.enter_async_context(eval_result_storage(app))
-
-            if database_provider is not None:
-                await stack.enter_async_context(database_provider(app))
-
-            if session_store_provider is not None:
-                await stack.enter_async_context(session_store_provider(app))
+        bundle: GatewayAdapters
+        async with adapters(app) as bundle:
+            if settings.enable_eval and bundle.eval_results is None:
+                raise RuntimeError(
+                    "settings.enable_eval=True but GatewayAdapters.eval_results "
+                    "is None. Provide an EvalResultRepository in the adapter "
+                    "lifespan."
+                )
+            app.state.adapters = bundle
 
             for hook in lifespan_hooks or []:
-                await stack.enter_async_context(hook(app))
-
-            _warn_unknown_adapter_slots(state)
+                async with hook(app):
+                    pass
 
             yield
 
@@ -350,7 +271,7 @@ def create_app(
         title="MH Gateway",
         summary="编排网关 — 场景加载、Agent 路由、事件流归集",
         description=_APP_DESCRIPTION.strip(),
-        version="0.1.0",
+        version="0.2.0",
         openapi_tags=TAGS_METADATA,
         lifespan=lifespan,
     )

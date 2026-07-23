@@ -6,7 +6,7 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
-from mh_gateway.adapters import ConfigProvider, SecretResolver
+from mh_gateway.adapters import ConfigProvider
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -92,7 +92,7 @@ class ConfigManager:
     def __init__(
         self,
         config_provider: ConfigProvider | None = None,
-        secret_resolver: SecretResolver | None = None,
+        secret_resolver: ConfigProvider | None = None,
     ) -> None:
         self._config = config_provider
         self._secret = secret_resolver
@@ -155,3 +155,27 @@ class ConfigManager:
             raise ConfigError(missing)
 
         return schema_cls(**kwargs)
+
+
+def setup_service_logging() -> None:
+    """Initialise the root logger to emit to stderr in a uniform format.
+
+    Idempotent: calling more than once is safe.
+    """
+    import logging
+    import sys
+
+    root = logging.getLogger()
+    if getattr(setup_service_logging, "_initialised", False):
+        return
+    if not root.handlers:
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s | %(name)s | %(levelname)-7s | %(message)s",
+            )
+        )
+        root.addHandler(handler)
+    if root.level == logging.NOTSET:
+        root.setLevel(logging.INFO)
+    setup_service_logging._initialised = True  # type: ignore[attr-defined]

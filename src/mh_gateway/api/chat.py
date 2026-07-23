@@ -14,7 +14,7 @@ from mh_gateway.api.dependencies import (
     resolve_request_permissions,
 )
 from mh_gateway.api.locale import parse_locale
-from mh_gateway.adapters import SessionStoreProtocol, match_permission
+from mh_gateway.adapters import SessionRepository, match_permission
 from mh_gateway.context import get_current_trace_id
 from mh_gateway.services.database import get_session_store
 from mh_gateway.services.runtime_service import (
@@ -79,7 +79,7 @@ async def chat(
     # all concurrent requests targeting the same memory_id.
     lock = await acquire_session_lock(memory_id)
     try:
-        store = await get_session_store()
+        store = await get_session_store(request)
         session = await store.get_session(memory_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
@@ -151,7 +151,7 @@ async def _stream_events(
     memory_id: str,
     agent_name: str,
     tool_names: list[str],
-    store: SessionStoreProtocol,
+    store: SessionRepository,
     locale: str = "",
     scenario_id: str = "",
     trace_id: str = "",

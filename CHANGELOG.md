@@ -1,8 +1,71 @@
 # Change Log
 
-## 0.2.0a1
+## 0.1.0a7
 
-- chore: bump `minimal-harness>=0.7.0a1` and `mh-service-kit>=0.1.1a1` for pre-release alignment
+- fix: declare `python-multipart>=0.0.20` as a direct
+  dependency. The `/api/v1/management/tools/upload` and
+  `/tools/upload-batch` routes use `UploadFile`, and FastAPI
+  requires `python-multipart` for multipart parsing. Previously
+  the package relied on `mh-orch-app` pulling it in
+  transitively in the workspace, so `uv tool install mh-local`
+  (and any other standalone consumer) crashed at import time
+  with `RuntimeError: Form data requires "python-multipart" to
+  be installed.`
+
+## 0.1.0a6
+
+- chore: lockstep pre-release bump with the SDK chain
+  (`mh-gateway` 0.1.0a6, `mh-service-kit` 0.1.1a6,
+  `minimal-harness` 0.7.0a7). No API changes.
+
+## 0.1.0a5
+
+- **BREAKING**: collapse 13 adapter protocols into 9 unified
+  contracts; `create_app` now takes a single
+  `AdapterLifespan` returning an immutable `GatewayAdapters`
+  bundle.  The mutable `AppState` with 14 named hook slots is
+  removed.  Removed symbols (no longer importable from
+  `mh_gateway`): `AppState`, `UserAuthProvider`, `PermissionChecker`,
+  `M2MAuthProvider`, `OutboundAuthProvider` (now takes an
+  `OutboundRequestContext`), `RegistryProvider`, `MetadataManager`,
+  `LLMProviderFactory`, `LLMProviderRegistry`, `LLMProviderStore`,
+  `DatabaseProtocol`, `SessionStoreProtocol`, `EvalResultStorage`,
+  `SecretResolver`, `LifespanHook`, `ExtraHeadersProvider`.
+- New unified abstractions: `UserAuthenticator`,
+  `AuthorizationProvider`, `M2MAuthenticator`, `OutboundAuthProvider`
+  (with `OutboundRequestContext`), `MetadataRepository`,
+  `LLMProviderService` (with `DefaultLLMProviderService`,
+  `LLMProviderConfig`, `LLMConfigBackend`, `LLMHeaderResolver`,
+  `LLMResolveSpec`), `SessionRepository` (with `healthcheck()`),
+  `EvalResultRepository`, `ConfigProvider`.
+- Public session DTOs (`Session`, `SessionSummary`,
+  `SimpleSession`) are now re-exported from
+  `mh_gateway.session`; the old `database._session` private
+  module is removed.
+- Runtime: LLM credentials are pre-loaded by
+  `llm.build_resolver(LLMResolveSpec)`, eliminating per-call
+  database reads on the agent hot path.
+- Outbound auth: M2M identity headers and the gateway-managed
+  `x-user-id` fallback are consolidated into a single
+  `OutboundAuthProvider.get_headers(OutboundRequestContext)` call.
+- `/ready` now delegates to `SessionRepository.healthcheck()`.
+- fix(llm): `create_llm` and `build_resolver` are now properly
+  `async`; the legacy `asyncio.run` workaround is removed.
+- fix(chat): `serialize_harness_event` returns a `dict` payload
+  (the legacy double-encoding path is removed).
+- fix(chat): SSE events are emitted with the flat schema expected by
+  the Vue/TypeScript frontend (`LLMChunk.{content, reasoning,
+  tool_calls}`, `LLMEnd.{content, reasoning_content, tool_calls,
+  usage, error}`, etc., no `type` discriminator wrapper).
+- tests: OpenAPI route surface pinned to 37 paths in
+  `tests/baseline_openapi.json`; SSE event schema locked in
+  `tests/test_event_schema.py`.
+- docs: `docs/adapter-migration-guide.md` for customers migrating
+  from the 14-hook `AppState` assembly to `AdapterLifespan`.
+- `orch-app` (`mh-orch-app`) and `mh-local` updated to construct a
+  single `AdapterLifespan`; `mh-local` no longer ships the
+  `_NullDatabase` shim.
+- chore: bump `minimal-harness==0.7.0a6` and `mh-service-kit==0.1.1a5` for lockstep pre-release alignment
 
 ## 0.1.3a1
 

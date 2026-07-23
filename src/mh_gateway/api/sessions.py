@@ -10,8 +10,10 @@ from mh_gateway.api.dependencies import (
     resolve_request_identity,
     resolve_request_permissions,
 )
+from mh_gateway.adapters import LLMResolveSpec
 from mh_gateway.api.locale import parse_locale, resolve_display_name
 from minimal_harness.agent._compaction import build_chat_payload
+from minimal_harness.types import AgentMetadata
 from mh_gateway.services.database import get_session_store
 from mh_gateway.services.runtime_service import (
     acquire_session_lock,
@@ -38,7 +40,7 @@ async def list_sessions(
 ):
     logger.debug("INBOUND list_sessions — user=%s scenario_id=%s", user_id, scenario_id)
     locale = parse_locale(request.headers.get("accept-language"))
-    store = await get_session_store()
+    store = await get_session_store(request)
     sessions = await store.list_user_sessions(user_id, scenario_id)
     return [
         {
@@ -75,18 +77,15 @@ async def create_session(
 
     display_name_locale: str | None = None
     adapters = request.app.state.adapters
-    management_provider = getattr(adapters, "management_provider", None)
-    if management_provider is not None:
-        agent_meta = await management_provider.get_agent(body.agent_name)
-        if agent_meta is not None:
-            display_name_locale = agent_meta.get("display_name_locale")
+    agent_meta = await adapters.metadata.get_agent(body.agent_name)
+    if agent_meta is not None:
+        display_name_locale = agent_meta.get("display_name_locale")
 
-    provider_store = getattr(adapters, "llm_provider_store", None)
     max_context = await resolve_model_max_context(
-        management_provider, provider_store, body.agent_name
+        adapters.metadata, adapters.llm, body.agent_name
     )
 
-    store = await get_session_store()
+    store = await get_session_store(request)
     session = await store.create_session(
         agent_name=body.agent_name,
         user_id=user_id,
@@ -117,7 +116,7 @@ async def get_session(
     memory_id: str,
     user_id: str = Depends(resolve_request_identity),
 ):
-    store = await get_session_store()
+    store = await get_session_store(request)
     session = await store.get_session(memory_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -125,10 +124,8 @@ async def get_session(
         raise HTTPException(status_code=403, detail="Access denied")
     locale = parse_locale(request.headers.get("accept-language"))
     adapters = request.app.state.adapters
-    management_provider = getattr(adapters, "management_provider", None)
-    provider_store = getattr(adapters, "llm_provider_store", None)
     max_context = await resolve_model_max_context(
-        management_provider, provider_store, session.agent_name
+        adapters.metadata, adapters.llm, session.agent_name
     )
     total_tokens = session.memory.get_message_usage().get("total_tokens", 0)
     return {
@@ -156,7 +153,7 @@ async def get_session_messages(
     memory_id: str,
     user_id: str = Depends(resolve_request_identity),
 ):
-    store = await get_session_store()
+    store = await get_session_store(request)
     session = await store.get_session(memory_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -165,10 +162,8 @@ async def get_session_messages(
     items = store.get_messages_as_items(session)
     compact_offset = session.memory.get_forward_offset()
     adapters = request.app.state.adapters
-    management_provider = getattr(adapters, "management_provider", None)
-    provider_store = getattr(adapters, "llm_provider_store", None)
     max_context = await resolve_model_max_context(
-        management_provider, provider_store, session.agent_name
+        adapters.metadata, adapters.llm, session.agent_name
     )
     total_tokens = session.memory.get_message_usage().get("total_tokens", 0)
     return {
@@ -185,7 +180,7 @@ async def delete_session(
     memory_id: str,
     user_id: str = Depends(resolve_request_identity),
 ):
-    store = await get_session_store()
+    store = await get_session_store(request)
     session = await store.get_session(memory_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -209,7 +204,7 @@ async def compact_session(
     )
     lock = await acquire_session_lock(memory_id)
     try:
-        store = await get_session_store()
+        store = await get_session_store(request)
         session = await store.get_session(memory_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
@@ -220,43 +215,21 @@ async def compact_session(
 
         adapters = request.app.state.adapters
         agent_name = session.agent_name
-        agent_meta = await adapters.management_provider.get_agent(agent_name)
+        agent_meta = await adapters.metadata.get_agent(agent_name)
         if agent_meta is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        llm_provider_registry = getattr(adapters, "llm_provider_registry", None)
-        if llm_provider_registry is None:
-            raise HTTPException(
-                status_code=500, detail="LLM provider registry not available"
-            )
-
-        provider_ref = agent_meta.get("provider_name", "") or agent_meta.get(
-            "provider", ""
+        target_meta = AgentMetadata(
+            name=agent_name,
+            metadata_id=agent_name,
+            agent_type=agent_meta.get("agent_type", "simple"),
+            provider=agent_meta.get("provider", "openai"),
+            model=agent_meta.get("model", ""),
+            llm_config=agent_meta.get("llm_config", {}),
         )
-        provider_type = agent_meta.get("provider", "openai")
-        model = agent_meta.get("model", "")
-        cfg: dict[str, object] = {"model": model}
-
-        llm_config = agent_meta.get("llm_config")
-        if isinstance(llm_config, dict):
-            cfg.update(llm_config)
-
-        provider_store = getattr(adapters, "llm_provider_store", None)
-        if provider_ref and provider_store is not None:
-            entity = await provider_store.get_provider(provider_ref)
-            if entity is not None:
-                provider_type = entity.get("provider_type", provider_type)
-                if not model:
-                    model = entity.get("default_model", "")
-                    cfg["model"] = model
-                api_key = entity.get("api_key")
-                if api_key:
-                    cfg["api_key"] = api_key
-                base_url = entity.get("base_url")
-                if base_url:
-                    cfg["base_url"] = base_url
-
-        llm_provider = llm_provider_registry.create(provider_type, cfg)
+        llm_provider = await adapters.llm.create_llm(
+            LLMResolveSpec(agent=target_meta, user=user_id)
+        )
         all_msgs = session.get_all_messages()
         system_prompt = agent_meta.get("system_prompt", "") or ""
 

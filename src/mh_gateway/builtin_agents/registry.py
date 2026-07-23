@@ -22,10 +22,10 @@ async def _discover_agents_fn(
     adapters = request.app.state.adapters
     identity = get_current_user_id() or ""
 
-    agents = await adapters.management_provider.list_agents()
+    agents = await adapters.metadata.list_agents()
     user_perms: list[str] | None = None
-    if adapters.permission_checker is not None:
-        user_perms = await adapters.permission_checker.get_permissions(identity)
+    if adapters.authorization is not None:
+        user_perms = await adapters.authorization.get_permissions(identity)
 
     result = []
     for a in agents:
@@ -77,7 +77,7 @@ async def _handoff_fn(
         return
 
     identity = get_current_user_id() or ""
-    store = await get_session_store()
+    store = await get_session_store(request)
 
     import uuid
 

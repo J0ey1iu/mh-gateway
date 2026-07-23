@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
 
 from mh_gateway.api.dependencies import require_permission
+from mh_gateway.llm import LLMProviderConfig
 from minimal_harness.agent.factory import get_builtin_agent_type_schemas
+from minimal_harness.tool.script_parser import parse_tool_script
 
 logger = logging.getLogger("orchestration.management")
 
@@ -112,6 +116,7 @@ class ToolCreate(BaseModel):
     parameters: dict[str, Any] = {}
     endpoint_url: str = ""
     source_code: str = ""
+    script_path: str = ""
 
 
 class ToolUpdate(BaseModel):
@@ -122,6 +127,7 @@ class ToolUpdate(BaseModel):
     parameters: dict[str, Any] | None = None
     endpoint_url: str | None = None
     source_code: str | None = None
+    script_path: str | None = None
 
 
 class ModelInfo(BaseModel):
@@ -171,7 +177,7 @@ async def list_scenarios(
     user_id: str = Depends(require_permission("manage:scene:*")),
 ) -> ListResponse:
     adapters = request.app.state.adapters
-    items = [_strip(s) for s in await adapters.management_provider.list_scenarios()]
+    items = [_strip(s) for s in await adapters.metadata.list_scenarios()]
     return ListResponse(
         **_filter_and_page(
             items,
@@ -190,7 +196,7 @@ async def get_scenario(
     user_id: str = Depends(require_permission("manage:scene:*")),
 ) -> dict[str, Any]:
     adapters = request.app.state.adapters
-    s = await adapters.management_provider.get_scenario(scenario_id)
+    s = await adapters.metadata.get_scenario(scenario_id)
     if s is None:
         raise HTTPException(404, "Scenario not found")
     return _strip(s)
@@ -202,7 +208,7 @@ async def create_scenario(
     body: ScenarioCreate,
     user_id: str = Depends(require_permission("manage:scene:*")),
 ) -> dict[str, Any]:
-    mgmt = request.app.state.adapters.management_provider
+    mgmt = request.app.state.adapters.metadata
     if mgmt is None:
         raise HTTPException(501, "Management provider not configured")
     try:
@@ -223,7 +229,7 @@ async def update_scenario(
     body: ScenarioUpdate,
     user_id: str = Depends(require_permission("manage:scene:*")),
 ) -> dict[str, Any]:
-    mgmt = request.app.state.adapters.management_provider
+    mgmt = request.app.state.adapters.metadata
     if mgmt is None:
         raise HTTPException(501, "Management provider not configured")
     payload = {k: v for k, v in body.model_dump().items() if v is not None}
@@ -245,7 +251,7 @@ async def delete_scenario(
     scenario_id: str,
     user_id: str = Depends(require_permission("manage:scene:*")),
 ) -> dict[str, str]:
-    mgmt = request.app.state.adapters.management_provider
+    mgmt = request.app.state.adapters.metadata
     if mgmt is None:
         raise HTTPException(501, "Management provider not configured")
     try:
@@ -269,7 +275,7 @@ async def add_scenario_agent(
     body: AddScenarioAgentRequest,
     user_id: str = Depends(require_permission("manage:scene:*")),
 ) -> dict[str, Any]:
-    mgmt = request.app.state.adapters.management_provider
+    mgmt = request.app.state.adapters.metadata
     if mgmt is None:
         raise HTTPException(501, "Management provider not configured")
     try:
@@ -301,7 +307,7 @@ async def remove_scenario_agent(
     agent_name: str,
     user_id: str = Depends(require_permission("manage:scene:*")),
 ) -> dict[str, Any]:
-    mgmt = request.app.state.adapters.management_provider
+    mgmt = request.app.state.adapters.metadata
     if mgmt is None:
         raise HTTPException(501, "Management provider not configured")
     try:
@@ -332,7 +338,7 @@ async def add_agent_tool(
     body: AgentToolRequest,
     user_id: str = Depends(require_permission("manage:scene:*")),
 ) -> dict[str, Any]:
-    mgmt = request.app.state.adapters.management_provider
+    mgmt = request.app.state.adapters.metadata
     if mgmt is None:
         raise HTTPException(501, "Management provider not configured")
     try:
@@ -365,7 +371,7 @@ async def remove_agent_tool(
     tool_name: str,
     user_id: str = Depends(require_permission("manage:scene:*")),
 ) -> dict[str, Any]:
-    mgmt = request.app.state.adapters.management_provider
+    mgmt = request.app.state.adapters.metadata
     if mgmt is None:
         raise HTTPException(501, "Management provider not configured")
     try:
@@ -402,7 +408,7 @@ async def list_agents(
     user_id: str = Depends(require_permission("manage:agent:*")),
 ) -> ListResponse:
     adapters = request.app.state.adapters
-    items = [_strip(a) for a in await adapters.management_provider.list_agents()]
+    items = [_strip(a) for a in await adapters.metadata.list_agents()]
     return ListResponse(
         **_filter_and_page(
             items,
@@ -421,7 +427,7 @@ async def get_agent(
     user_id: str = Depends(require_permission("manage:agent:*")),
 ) -> dict[str, Any]:
     adapters = request.app.state.adapters
-    a = await adapters.management_provider.get_agent(name)
+    a = await adapters.metadata.get_agent(name)
     if a is None:
         raise HTTPException(404, "Agent not found")
     return _strip(a)
@@ -433,7 +439,7 @@ async def create_agent(
     body: AgentCreate,
     user_id: str = Depends(require_permission("manage:agent:*")),
 ) -> dict[str, Any]:
-    mgmt = request.app.state.adapters.management_provider
+    mgmt = request.app.state.adapters.metadata
     if mgmt is None:
         raise HTTPException(501, "Management provider not configured")
     try:
@@ -456,7 +462,7 @@ async def update_agent(
     body: AgentUpdate,
     user_id: str = Depends(require_permission("manage:agent:*")),
 ) -> dict[str, Any]:
-    mgmt = request.app.state.adapters.management_provider
+    mgmt = request.app.state.adapters.metadata
     if mgmt is None:
         raise HTTPException(501, "Management provider not configured")
     payload = {k: v for k, v in body.model_dump().items() if v is not None}
@@ -478,7 +484,7 @@ async def delete_agent(
     name: str,
     user_id: str = Depends(require_permission("manage:agent:*")),
 ) -> dict[str, str]:
-    mgmt = request.app.state.adapters.management_provider
+    mgmt = request.app.state.adapters.metadata
     if mgmt is None:
         raise HTTPException(501, "Management provider not configured")
     try:
@@ -504,11 +510,7 @@ async def list_providers(
     request: Request,
     user_id: str = Depends(require_permission("manage:agent:*")),
 ) -> list[str]:
-    adapters = request.app.state.adapters
-    registry = getattr(adapters, "llm_provider_registry", None)
-    if registry is None:
-        return []
-    return registry.list_providers()
+    return request.app.state.adapters.llm.list_provider_types()
 
 
 # ── Provider Configs ──
@@ -522,11 +524,7 @@ async def list_provider_configs(
     page_size: int = Query(0, ge=0, description="Items per page (0 = all)"),
     user_id: str = Depends(require_permission("manage:agent:*")),
 ) -> ListResponse:
-    adapters = request.app.state.adapters
-    store = getattr(adapters, "llm_provider_store", None)
-    if store is None:
-        return ListResponse(items=[], total=0, page=page, page_size=page_size)
-    items = await store.list_providers()
+    items = [c.to_dict() for c in await request.app.state.adapters.llm.list_configs()]
     return ListResponse(
         **_filter_and_page(
             items,
@@ -544,14 +542,10 @@ async def get_provider_config(
     name: str,
     user_id: str = Depends(require_permission("manage:agent:*")),
 ) -> dict[str, Any]:
-    adapters = request.app.state.adapters
-    store = getattr(adapters, "llm_provider_store", None)
-    if store is None:
-        raise HTTPException(501, "Provider store not configured")
-    p = await store.get_provider(name)
-    if p is None:
+    cfg = await request.app.state.adapters.llm.get_config(name)
+    if cfg is None:
         raise HTTPException(404, "Provider config not found")
-    return p
+    return cfg.to_dict()
 
 
 @router.post("/provider-configs", status_code=201)
@@ -560,16 +554,14 @@ async def create_provider_config(
     body: ProviderCreate,
     user_id: str = Depends(require_permission("manage:agent:*")),
 ) -> dict[str, Any]:
-    adapters = request.app.state.adapters
-    store = getattr(adapters, "llm_provider_store", None)
-    if store is None:
-        raise HTTPException(501, "Provider store not configured")
     try:
         payload = body.model_dump()
         payload["created_by"] = user_id
-        result = await store.create_provider(payload)
+        result = await request.app.state.adapters.llm.create_config(
+            LLMProviderConfig.from_dict(payload)
+        )
         logger.info("Provider config created name=%s by user=%s", body.name, user_id)
-        return result
+        return result.to_dict()
     except ValueError as e:
         logger.warning(
             "Create provider config conflict name=%s by user=%s: %s",
@@ -587,16 +579,16 @@ async def update_provider_config(
     body: ProviderUpdate,
     user_id: str = Depends(require_permission("manage:agent:*")),
 ) -> dict[str, Any]:
-    adapters = request.app.state.adapters
-    store = getattr(adapters, "llm_provider_store", None)
-    if store is None:
-        raise HTTPException(501, "Provider store not configured")
     payload = {k: v for k, v in body.model_dump().items() if v is not None}
     payload["updated_by"] = user_id
     try:
-        result = await store.update_provider(name, payload)
+        cfg = await request.app.state.adapters.llm.get_config(name)
+        if cfg is None:
+            raise ValueError(f"Provider '{name}' not found")
+        merged = LLMProviderConfig.from_dict({**cfg.to_dict(), **payload, "name": name})
+        result = await request.app.state.adapters.llm.update_config(name, merged)
         logger.info("Provider config updated name=%s by user=%s", name, user_id)
-        return result
+        return result.to_dict()
     except ValueError as e:
         logger.warning(
             "Update provider config not found name=%s by user=%s: %s",
@@ -613,12 +605,8 @@ async def delete_provider_config(
     name: str,
     user_id: str = Depends(require_permission("manage:agent:*")),
 ) -> dict[str, str]:
-    adapters = request.app.state.adapters
-    store = getattr(adapters, "llm_provider_store", None)
-    if store is None:
-        raise HTTPException(501, "Provider store not configured")
     try:
-        await store.delete_provider(name)
+        await request.app.state.adapters.llm.delete_config(name)
         logger.info("Provider config deleted name=%s by user=%s", name, user_id)
         return {"status": "deleted", "name": name}
     except ValueError as e:
@@ -644,14 +632,10 @@ async def list_provider_models(
     name: str,
     user_id: str = Depends(require_permission("manage:agent:*")),
 ) -> list[dict[str, Any]]:
-    adapters = request.app.state.adapters
-    store = getattr(adapters, "llm_provider_store", None)
-    if store is None:
-        raise HTTPException(501, "Provider store not configured")
-    p = await store.get_provider(name)
-    if p is None:
+    cfg = await request.app.state.adapters.llm.get_config(name)
+    if cfg is None:
         raise HTTPException(404, "Provider config not found")
-    return _get_models(p)
+    return _get_models(cfg.to_dict())
 
 
 @router.post("/provider-configs/{name}/models", status_code=201)
@@ -661,19 +645,18 @@ async def create_provider_model(
     body: ModelInfo,
     user_id: str = Depends(require_permission("manage:agent:*")),
 ) -> dict[str, Any]:
-    adapters = request.app.state.adapters
-    store = getattr(adapters, "llm_provider_store", None)
-    if store is None:
-        raise HTTPException(501, "Provider store not configured")
-    p = await store.get_provider(name)
-    if p is None:
+    cfg = await request.app.state.adapters.llm.get_config(name)
+    if cfg is None:
         raise HTTPException(404, "Provider config not found")
-    models = _get_models(p)
+    models = _get_models(cfg.to_dict())
     if any(m.get("id") == body.id for m in models):
         raise HTTPException(409, f"Model '{body.id}' already exists")
     model_dict = body.model_dump()
     models.append(model_dict)
-    await store.update_provider(name, {"models": models, "updated_by": user_id})
+    merged = LLMProviderConfig.from_dict(
+        {**cfg.to_dict(), "models": models, "updated_by": user_id}
+    )
+    await request.app.state.adapters.llm.update_config(name, merged)
     logger.info("Model %s added to provider %s by user=%s", body.id, name, user_id)
     return model_dict
 
@@ -686,21 +669,20 @@ async def update_provider_model(
     body: ModelInfo,
     user_id: str = Depends(require_permission("manage:agent:*")),
 ) -> dict[str, Any]:
-    adapters = request.app.state.adapters
-    store = getattr(adapters, "llm_provider_store", None)
-    if store is None:
-        raise HTTPException(501, "Provider store not configured")
-    p = await store.get_provider(name)
-    if p is None:
+    cfg = await request.app.state.adapters.llm.get_config(name)
+    if cfg is None:
         raise HTTPException(404, "Provider config not found")
     if body.id != model_id:
         raise HTTPException(422, "Model id in body does not match path parameter")
-    models = _get_models(p)
+    models = _get_models(cfg.to_dict())
     for i, m in enumerate(models):
         if m.get("id") == model_id:
             model_dict = body.model_dump()
             models[i] = model_dict
-            await store.update_provider(name, {"models": models, "updated_by": user_id})
+            merged = LLMProviderConfig.from_dict(
+                {**cfg.to_dict(), "models": models, "updated_by": user_id}
+            )
+            await request.app.state.adapters.llm.update_config(name, merged)
             logger.info(
                 "Model %s updated for provider %s by user=%s",
                 model_id,
@@ -718,18 +700,17 @@ async def delete_provider_model(
     model_id: str,
     user_id: str = Depends(require_permission("manage:agent:*")),
 ) -> dict[str, str]:
-    adapters = request.app.state.adapters
-    store = getattr(adapters, "llm_provider_store", None)
-    if store is None:
-        raise HTTPException(501, "Provider store not configured")
-    p = await store.get_provider(name)
-    if p is None:
+    cfg = await request.app.state.adapters.llm.get_config(name)
+    if cfg is None:
         raise HTTPException(404, "Provider config not found")
-    models = _get_models(p)
+    models = _get_models(cfg.to_dict())
     new_models = [m for m in models if m.get("id") != model_id]
     if len(new_models) == len(models):
         raise HTTPException(404, f"Model '{model_id}' not found")
-    await store.update_provider(name, {"models": new_models, "updated_by": user_id})
+    merged = LLMProviderConfig.from_dict(
+        {**cfg.to_dict(), "models": new_models, "updated_by": user_id}
+    )
+    await request.app.state.adapters.llm.update_config(name, merged)
     logger.info("Model %s deleted from provider %s by user=%s", model_id, name, user_id)
     return {"status": "deleted", "model_id": model_id}
 
@@ -746,7 +727,7 @@ async def list_tools(
     user_id: str = Depends(require_permission("manage:tool:*")),
 ) -> ListResponse:
     adapters = request.app.state.adapters
-    items = [_strip(t) for t in await adapters.management_provider.list_tools()]
+    items = [_strip(t) for t in await adapters.metadata.list_tools()]
     return ListResponse(
         **_filter_and_page(
             items,
@@ -765,7 +746,7 @@ async def get_tool(
     user_id: str = Depends(require_permission("manage:tool:*")),
 ) -> dict[str, Any]:
     adapters = request.app.state.adapters
-    t = await adapters.management_provider.get_tool(name)
+    t = await adapters.metadata.get_tool(name)
     if t is None:
         raise HTTPException(404, "Tool not found")
     return _strip(t)
@@ -777,7 +758,7 @@ async def create_tool(
     body: ToolCreate,
     user_id: str = Depends(require_permission("manage:tool:*")),
 ) -> dict[str, Any]:
-    mgmt = request.app.state.adapters.management_provider
+    mgmt = request.app.state.adapters.metadata
     if mgmt is None:
         raise HTTPException(501, "Management provider not configured")
     try:
@@ -800,7 +781,7 @@ async def update_tool(
     body: ToolUpdate,
     user_id: str = Depends(require_permission("manage:tool:*")),
 ) -> dict[str, Any]:
-    mgmt = request.app.state.adapters.management_provider
+    mgmt = request.app.state.adapters.metadata
     if mgmt is None:
         raise HTTPException(501, "Management provider not configured")
     payload = {k: v for k, v in body.model_dump().items() if v is not None}
@@ -818,15 +799,214 @@ async def update_tool(
 async def delete_tool(
     request: Request,
     name: str,
+    force: bool = Query(
+        False, description="Also remove tool from all scenarios/agents"
+    ),
     user_id: str = Depends(require_permission("manage:tool:*")),
 ) -> dict[str, str]:
-    mgmt = request.app.state.adapters.management_provider
+    mgmt = request.app.state.adapters.metadata
     if mgmt is None:
         raise HTTPException(501, "Management provider not configured")
     try:
+        tool = await mgmt.get_tool(name)
+        if tool is None:
+            raise HTTPException(404, f"Tool '{name}' not found")
+
+        # ── check scenario/agent relationships ──
+        usages: list[dict[str, str]] = []
+        for s in await mgmt.list_scenarios():
+            for a in s.get("agents", []):
+                if name in a.get("tool_names", []):
+                    usages.append({"scenario_id": s["id"], "agent_name": a["name"]})
+        if usages and not force:
+            raise HTTPException(
+                409,
+                detail={
+                    "message": (
+                        f"Tool '{name}' is still referenced by {len(usages)} "
+                        "scenario/agent(s). Use ?force=true to auto-remove "
+                        "these bindings and proceed."
+                    ),
+                    "usages": usages,
+                },
+            )
+
+        if usages and force:
+            for u in usages:
+                try:
+                    await mgmt.remove_agent_tool(
+                        u["scenario_id"], u["agent_name"], name
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to remove tool %s from scenario %s agent %s",
+                        name,
+                        u["scenario_id"],
+                        u["agent_name"],
+                    )
+
+        script_path = tool.get("script_path", "") if tool else ""
         await mgmt.delete_tool(name)
         logger.info("Tool deleted name=%s by user=%s", name, user_id)
+        if script_path:
+            script_store = request.app.state.adapters.tool_script_store
+            if script_store is not None:
+                script_name = Path(script_path).name
+                await script_store.delete(script_name)
         return {"status": "deleted", "name": name}
+    except HTTPException:
+        raise
     except ValueError as e:
         logger.warning("Delete tool not found name=%s by user=%s: %s", name, user_id, e)
         raise HTTPException(404, str(e)) from None
+
+
+# ── Tool Upload ──
+
+
+class UploadToolResult(BaseModel):
+    tool: dict[str, Any]
+    name: str
+    script_path: str
+
+
+class UploadToolsResponse(BaseModel):
+    created: list[UploadToolResult]
+    errors: list[dict[str, str]]
+
+
+async def _process_uploaded_script(
+    mgmt: Any,
+    script_store: Any,
+    filename: str,
+    content: bytes,
+    overwrite: bool,
+    user_id: str,
+) -> UploadToolResult:
+    if not overwrite and await script_store.exists(filename):
+        raise ValueError(f"Script '{filename}' already exists")
+
+    script_path = await script_store.save(filename, content, overwrite=overwrite)
+
+    tmp_dir = Path(script_path).parent
+    tmp_file = tmp_dir / filename
+    tmp_file.write_bytes(content)
+
+    parse_result = parse_tool_script(tmp_file)
+    if not parse_result.is_valid:
+        await script_store.delete(filename)
+        raise ValueError(f"Invalid tool script: {'; '.join(parse_result.errors)}")
+
+    existing = await mgmt.get_tool(parse_result.name)
+    if existing:
+        await script_store.delete(filename)
+        raise ValueError(
+            f"Tool '{parse_result.name}' already exists "
+            "(name must be unique across all bindings)"
+        )
+
+    tool_payload = {
+        "name": parse_result.name,
+        "display_name": parse_result.display_name,
+        "display_name_locale": (
+            json.dumps(parse_result.display_name_locale, ensure_ascii=False)
+            if parse_result.display_name_locale
+            else ""
+        ),
+        "description": parse_result.description,
+        "description_locale": (
+            json.dumps(parse_result.description_locale, ensure_ascii=False)
+            if parse_result.description_locale
+            else ""
+        ),
+        "parameters": parse_result.parameters,
+        "script_path": script_path,
+        "created_by": user_id,
+    }
+    created = await mgmt.create_tool(tool_payload)
+    logger.info(
+        "Tool uploaded from script name=%s path=%s by user=%s",
+        parse_result.name,
+        script_path,
+        user_id,
+    )
+    return UploadToolResult(
+        tool=created,
+        name=parse_result.name,
+        script_path=script_path,
+    )
+
+
+@router.post("/tools/upload", status_code=201)
+async def upload_tool_script(
+    request: Request,
+    file: UploadFile,
+    overwrite: bool = Query(False),
+    user_id: str = Depends(require_permission("manage:tool:*")),
+) -> UploadToolResult:
+    adapters = request.app.state.adapters
+    mgmt = adapters.metadata
+    script_store = adapters.tool_script_store
+    if mgmt is None or script_store is None:
+        raise HTTPException(501, "Tool script upload not configured")
+
+    if not file.filename or not file.filename.endswith(".py"):
+        raise HTTPException(422, "Only .py files are accepted")
+
+    content = await file.read()
+
+    try:
+        return await _process_uploaded_script(
+            mgmt, script_store, file.filename, content, overwrite, user_id
+        )
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
+
+
+@router.post("/tools/upload-batch", status_code=201)
+async def upload_tool_scripts_batch(
+    request: Request,
+    files: list[UploadFile],
+    overwrite: bool = Query(False),
+    user_id: str = Depends(require_permission("manage:tool:*")),
+) -> UploadToolsResponse:
+    adapters = request.app.state.adapters
+    mgmt = adapters.metadata
+    script_store = adapters.tool_script_store
+    if mgmt is None or script_store is None:
+        raise HTTPException(501, "Tool script upload not configured")
+
+    created: list[UploadToolResult] = []
+    errors: list[dict[str, str]] = []
+
+    for file in files:
+        if not file.filename or not file.filename.endswith(".py"):
+            errors.append(
+                {
+                    "filename": file.filename or "(unknown)",
+                    "error": "Only .py files are accepted",
+                }
+            )
+            continue
+        try:
+            content = await file.read()
+            result = await _process_uploaded_script(
+                mgmt, script_store, file.filename, content, overwrite, user_id
+            )
+            created.append(result)
+        except ValueError as e:
+            errors.append(
+                {
+                    "filename": file.filename or "(unknown)",
+                    "error": str(e),
+                }
+            )
+        except Exception as e:
+            errors.append(
+                {
+                    "filename": file.filename or "(unknown)",
+                    "error": str(e),
+                }
+            )
+
+    return UploadToolsResponse(created=created, errors=errors)

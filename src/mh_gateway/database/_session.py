@@ -9,9 +9,8 @@ from minimal_harness.memory import (
     Memory,
     MemoryData,
     Message,
-    TokenUsage,
 )
-from minimal_harness.types import CompactionEvent, CompactionSummarizer
+from minimal_harness.types import CompactionEvent, CompactionSummarizer, TokenUsage
 
 from mh_gateway.database._ids import generate_bigint_id
 

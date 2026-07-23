@@ -24,10 +24,10 @@ def _user_info(identity, permissions: list[str] | None = None) -> dict:
 @auth_router.get("/me")
 async def me(request: Request):
     adapters = request.app.state.adapters
-    identity = await adapters.token_verifier.verify(request)
+    identity = await adapters.user_auth.verify(request)
     if identity is None or not identity.user_id:
         raise HTTPException(status_code=401, detail="Authentication required")
-    perms = await adapters.permission_checker.get_permissions(identity.user_id)
+    perms = await adapters.authorization.get_permissions(identity.user_id)
     return _user_info(identity, permissions=perms)
 
 
@@ -35,5 +35,5 @@ async def me(request: Request):
 async def auth_logout(request: Request):
     adapters = request.app.state.adapters
     response = JSONResponse({"success": True})
-    await adapters.token_verifier.logout(request, response)
+    await adapters.user_auth.logout(request, response)
     return response

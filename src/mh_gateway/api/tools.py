@@ -25,7 +25,7 @@ async def list_tools(
 ):
     adapters = request.app.state.adapters
     locale = parse_locale(accept_language)
-    tools = await adapters.management_provider.list_tools()
+    tools = await adapters.metadata.list_tools()
     if has_broad_permission(user_perms, "use:tool"):
         return [
             {
