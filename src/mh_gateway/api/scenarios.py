@@ -101,7 +101,7 @@ async def _enrich_agents_for_scenario(
                             tool_map[t].get("display_name_locale"),
                             locale,
                         )
-                        if t in tool_map
+                        if t in tool_map and tool_map[t] is not None
                         else t,
                     }
                     for t in tools

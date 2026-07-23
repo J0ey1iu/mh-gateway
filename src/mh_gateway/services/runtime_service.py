@@ -19,6 +19,7 @@ from minimal_harness.tool.registry import ToolRegistry
 from minimal_harness.types import (
     AgentMetadata,
     CompactionSettings,
+    ExternalScriptToolBinding,
     LLMStart,
     LocalToolBinding,
     RemoteToolBinding,
@@ -338,7 +339,9 @@ async def _tool_binding(
     scenario_id: str = "",
     agent_name: str = "",
     verify_agent_tool_ssl: bool = False,
-) -> RemoteToolBinding | LocalToolBinding:
+) -> RemoteToolBinding | LocalToolBinding | ExternalScriptToolBinding:
+    if "script_path" in meta and meta["script_path"]:
+        return ExternalScriptToolBinding(script_path=meta["script_path"])
     if "endpoint_url" in meta and meta["endpoint_url"]:
         url = meta["endpoint_url"]
         if request and url.startswith("/"):

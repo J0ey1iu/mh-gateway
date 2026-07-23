@@ -2255,6 +2255,18 @@
               "type": "string",
               "title": "Name"
             }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Also remove tool from all scenarios/agents",
+              "default": false,
+              "title": "Force"
+            },
+            "description": "Also remove tool from all scenarios/agents"
           }
         ],
         "responses": {
@@ -2268,6 +2280,112 @@
                     "type": "string"
                   },
                   "title": "Response Delete Tool Api V1 Management Tools  Name  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/management/tools/upload": {
+      "post": {
+        "tags": [
+          "management"
+        ],
+        "summary": "Upload Tool Script",
+        "operationId": "upload_tool_script_api_v1_management_tools_upload_post",
+        "parameters": [
+          {
+            "name": "overwrite",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Overwrite"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_tool_script_api_v1_management_tools_upload_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadToolResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/management/tools/upload-batch": {
+      "post": {
+        "tags": [
+          "management"
+        ],
+        "summary": "Upload Tool Scripts Batch",
+        "operationId": "upload_tool_scripts_batch_api_v1_management_tools_upload_batch_post",
+        "parameters": [
+          {
+            "name": "overwrite",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Overwrite"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_tool_scripts_batch_api_v1_management_tools_upload_batch_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadToolsResponse"
                 }
               }
             }
@@ -2780,6 +2898,37 @@
         ],
         "title": "BatchEvalRequestSchema"
       },
+      "Body_upload_tool_script_api_v1_management_tools_upload_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_tool_script_api_v1_management_tools_upload_post"
+      },
+      "Body_upload_tool_scripts_batch_api_v1_management_tools_upload_batch_post": {
+        "properties": {
+          "files": {
+            "items": {
+              "type": "string",
+              "contentMediaType": "application/octet-stream"
+            },
+            "type": "array",
+            "title": "Files"
+          }
+        },
+        "type": "object",
+        "required": [
+          "files"
+        ],
+        "title": "Body_upload_tool_scripts_batch_api_v1_management_tools_upload_batch_post"
+      },
       "ChatRequest": {
         "properties": {
           "message": {
@@ -3203,6 +3352,11 @@
             "type": "string",
             "title": "Source Code",
             "default": ""
+          },
+          "script_path": {
+            "type": "string",
+            "title": "Script Path",
+            "default": ""
           }
         },
         "type": "object",
@@ -3290,10 +3444,72 @@
               }
             ],
             "title": "Source Code"
+          },
+          "script_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Script Path"
           }
         },
         "type": "object",
         "title": "ToolUpdate"
+      },
+      "UploadToolResult": {
+        "properties": {
+          "tool": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Tool"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "script_path": {
+            "type": "string",
+            "title": "Script Path"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tool",
+          "name",
+          "script_path"
+        ],
+        "title": "UploadToolResult"
+      },
+      "UploadToolsResponse": {
+        "properties": {
+          "created": {
+            "items": {
+              "$ref": "#/components/schemas/UploadToolResult"
+            },
+            "type": "array",
+            "title": "Created"
+          },
+          "errors": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Errors"
+          }
+        },
+        "type": "object",
+        "required": [
+          "created",
+          "errors"
+        ],
+        "title": "UploadToolsResponse"
       },
       "ValidationError": {
         "properties": {

@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
 
 from mh_gateway.api.dependencies import require_permission
 from mh_gateway.llm import LLMProviderConfig
 from minimal_harness.agent.factory import get_builtin_agent_type_schemas
+from minimal_harness.tool.script_parser import parse_tool_script
 
 logger = logging.getLogger("orchestration.management")
 
@@ -113,6 +116,7 @@ class ToolCreate(BaseModel):
     parameters: dict[str, Any] = {}
     endpoint_url: str = ""
     source_code: str = ""
+    script_path: str = ""
 
 
 class ToolUpdate(BaseModel):
@@ -123,6 +127,7 @@ class ToolUpdate(BaseModel):
     parameters: dict[str, Any] | None = None
     endpoint_url: str | None = None
     source_code: str | None = None
+    script_path: str | None = None
 
 
 class ModelInfo(BaseModel):
@@ -794,15 +799,214 @@ async def update_tool(
 async def delete_tool(
     request: Request,
     name: str,
+    force: bool = Query(
+        False, description="Also remove tool from all scenarios/agents"
+    ),
     user_id: str = Depends(require_permission("manage:tool:*")),
 ) -> dict[str, str]:
     mgmt = request.app.state.adapters.metadata
     if mgmt is None:
         raise HTTPException(501, "Management provider not configured")
     try:
+        tool = await mgmt.get_tool(name)
+        if tool is None:
+            raise HTTPException(404, f"Tool '{name}' not found")
+
+        # ── check scenario/agent relationships ──
+        usages: list[dict[str, str]] = []
+        for s in await mgmt.list_scenarios():
+            for a in s.get("agents", []):
+                if name in a.get("tool_names", []):
+                    usages.append({"scenario_id": s["id"], "agent_name": a["name"]})
+        if usages and not force:
+            raise HTTPException(
+                409,
+                detail={
+                    "message": (
+                        f"Tool '{name}' is still referenced by {len(usages)} "
+                        "scenario/agent(s). Use ?force=true to auto-remove "
+                        "these bindings and proceed."
+                    ),
+                    "usages": usages,
+                },
+            )
+
+        if usages and force:
+            for u in usages:
+                try:
+                    await mgmt.remove_agent_tool(
+                        u["scenario_id"], u["agent_name"], name
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to remove tool %s from scenario %s agent %s",
+                        name,
+                        u["scenario_id"],
+                        u["agent_name"],
+                    )
+
+        script_path = tool.get("script_path", "") if tool else ""
         await mgmt.delete_tool(name)
         logger.info("Tool deleted name=%s by user=%s", name, user_id)
+        if script_path:
+            script_store = request.app.state.adapters.tool_script_store
+            if script_store is not None:
+                script_name = Path(script_path).name
+                await script_store.delete(script_name)
         return {"status": "deleted", "name": name}
+    except HTTPException:
+        raise
     except ValueError as e:
         logger.warning("Delete tool not found name=%s by user=%s: %s", name, user_id, e)
         raise HTTPException(404, str(e)) from None
+
+
+# ── Tool Upload ──
+
+
+class UploadToolResult(BaseModel):
+    tool: dict[str, Any]
+    name: str
+    script_path: str
+
+
+class UploadToolsResponse(BaseModel):
+    created: list[UploadToolResult]
+    errors: list[dict[str, str]]
+
+
+async def _process_uploaded_script(
+    mgmt: Any,
+    script_store: Any,
+    filename: str,
+    content: bytes,
+    overwrite: bool,
+    user_id: str,
+) -> UploadToolResult:
+    if not overwrite and await script_store.exists(filename):
+        raise ValueError(f"Script '{filename}' already exists")
+
+    script_path = await script_store.save(filename, content, overwrite=overwrite)
+
+    tmp_dir = Path(script_path).parent
+    tmp_file = tmp_dir / filename
+    tmp_file.write_bytes(content)
+
+    parse_result = parse_tool_script(tmp_file)
+    if not parse_result.is_valid:
+        await script_store.delete(filename)
+        raise ValueError(f"Invalid tool script: {'; '.join(parse_result.errors)}")
+
+    existing = await mgmt.get_tool(parse_result.name)
+    if existing:
+        await script_store.delete(filename)
+        raise ValueError(
+            f"Tool '{parse_result.name}' already exists "
+            "(name must be unique across all bindings)"
+        )
+
+    tool_payload = {
+        "name": parse_result.name,
+        "display_name": parse_result.display_name,
+        "display_name_locale": (
+            json.dumps(parse_result.display_name_locale, ensure_ascii=False)
+            if parse_result.display_name_locale
+            else ""
+        ),
+        "description": parse_result.description,
+        "description_locale": (
+            json.dumps(parse_result.description_locale, ensure_ascii=False)
+            if parse_result.description_locale
+            else ""
+        ),
+        "parameters": parse_result.parameters,
+        "script_path": script_path,
+        "created_by": user_id,
+    }
+    created = await mgmt.create_tool(tool_payload)
+    logger.info(
+        "Tool uploaded from script name=%s path=%s by user=%s",
+        parse_result.name,
+        script_path,
+        user_id,
+    )
+    return UploadToolResult(
+        tool=created,
+        name=parse_result.name,
+        script_path=script_path,
+    )
+
+
+@router.post("/tools/upload", status_code=201)
+async def upload_tool_script(
+    request: Request,
+    file: UploadFile,
+    overwrite: bool = Query(False),
+    user_id: str = Depends(require_permission("manage:tool:*")),
+) -> UploadToolResult:
+    adapters = request.app.state.adapters
+    mgmt = adapters.metadata
+    script_store = adapters.tool_script_store
+    if mgmt is None or script_store is None:
+        raise HTTPException(501, "Tool script upload not configured")
+
+    if not file.filename or not file.filename.endswith(".py"):
+        raise HTTPException(422, "Only .py files are accepted")
+
+    content = await file.read()
+
+    try:
+        return await _process_uploaded_script(
+            mgmt, script_store, file.filename, content, overwrite, user_id
+        )
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
+
+
+@router.post("/tools/upload-batch", status_code=201)
+async def upload_tool_scripts_batch(
+    request: Request,
+    files: list[UploadFile],
+    overwrite: bool = Query(False),
+    user_id: str = Depends(require_permission("manage:tool:*")),
+) -> UploadToolsResponse:
+    adapters = request.app.state.adapters
+    mgmt = adapters.metadata
+    script_store = adapters.tool_script_store
+    if mgmt is None or script_store is None:
+        raise HTTPException(501, "Tool script upload not configured")
+
+    created: list[UploadToolResult] = []
+    errors: list[dict[str, str]] = []
+
+    for file in files:
+        if not file.filename or not file.filename.endswith(".py"):
+            errors.append(
+                {
+                    "filename": file.filename or "(unknown)",
+                    "error": "Only .py files are accepted",
+                }
+            )
+            continue
+        try:
+            content = await file.read()
+            result = await _process_uploaded_script(
+                mgmt, script_store, file.filename, content, overwrite, user_id
+            )
+            created.append(result)
+        except ValueError as e:
+            errors.append(
+                {
+                    "filename": file.filename or "(unknown)",
+                    "error": str(e),
+                }
+            )
+        except Exception as e:
+            errors.append(
+                {
+                    "filename": file.filename or "(unknown)",
+                    "error": str(e),
+                }
+            )
+
+    return UploadToolsResponse(created=created, errors=errors)

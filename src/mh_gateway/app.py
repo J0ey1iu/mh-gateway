@@ -33,6 +33,7 @@ from mh_gateway.adapters import (
     MetadataRepository,
     OutboundAuthProvider,
     SessionRepository,
+    ToolScriptStore,
     UserAuthenticator,
 )
 from mh_gateway.api.router import router
@@ -82,6 +83,7 @@ class GatewayAdapters:
     llm: LLMProviderService
     sessions: SessionRepository
     eval_results: EvalResultRepository | None = None
+    tool_script_store: ToolScriptStore | None = None
 
 
 class AdapterLifespan(Protocol):

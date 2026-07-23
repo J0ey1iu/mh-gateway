@@ -435,6 +435,36 @@ class EvalResultRepository(Protocol):
     async def close(self) -> None: ...
 
 
+# ── Tool Script Store ──────────────────────────────────────────────────────────
+
+
+@runtime_checkable
+class ToolScriptStore(Protocol):
+    """Storage abstraction for uploaded tool script files.
+
+    Each deployment implements this protocol to define where ``.py``
+    tool scripts are persisted on disk.  Apps that do not support
+    file-based tools may leave this as ``None`` in
+    :class:`GatewayAdapters`.
+    """
+
+    async def save(self, name: str, content: bytes, overwrite: bool = False) -> str:
+        """Persist a script file.
+
+        Returns the absolute filesystem path where the file was saved
+        (used as ``ExternalScriptToolBinding.script_path``).
+        """
+        ...
+
+    async def read(self, name: str) -> bytes | None: ...
+
+    async def delete(self, name: str) -> bool: ...
+
+    async def exists(self, name: str) -> bool: ...
+
+    async def close(self) -> None: ...
+
+
 # ── Config ────────────────────────────────────────────────────────────────────
 
 
@@ -464,6 +494,7 @@ __all__ = [
     "OutboundAuthProvider",
     "OutboundRequestContext",
     "SessionRepository",
+    "ToolScriptStore",
     "UserAuthenticator",
     "UserIdentity",
     "has_broad_permission",
