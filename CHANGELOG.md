@@ -1,5 +1,23 @@
 # Change Log
 
+## 0.1.0a7
+
+- fix: declare `python-multipart>=0.0.20` as a direct
+  dependency. The `/api/v1/management/tools/upload` and
+  `/tools/upload-batch` routes use `UploadFile`, and FastAPI
+  requires `python-multipart` for multipart parsing. Previously
+  the package relied on `mh-orch-app` pulling it in
+  transitively in the workspace, so `uv tool install mh-local`
+  (and any other standalone consumer) crashed at import time
+  with `RuntimeError: Form data requires "python-multipart" to
+  be installed.`
+
+## 0.1.0a6
+
+- chore: lockstep pre-release bump with the SDK chain
+  (`mh-gateway` 0.1.0a6, `mh-service-kit` 0.1.1a6,
+  `minimal-harness` 0.7.0a7). No API changes.
+
 ## 0.1.0a5
 
 - **BREAKING**: collapse 13 adapter protocols into 9 unified
