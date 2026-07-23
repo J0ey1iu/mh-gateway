@@ -1,6 +1,6 @@
 # Adapter 重构迁移指南（`mh-gateway` 0.2.0）
 
-> 本文档面向**已经基于 `mh-gateway` 旧版本完成企业适配的客户开发团队**，帮助你们把现有代码迁移到新的统一 Adapter 体系（9 个协议 + 单一 `AdapterLifespan`）。
+> 本文档面向**已经基于 `mh-gateway` 旧版本完成企业适配的客户开发团队**，帮助你们把现有代码迁移到新的统一 Adapter 体系（10 个协议 + 单一 `AdapterLifespan`）。
 >
 > 适用版本：`mh-gateway >= 0.2.0a1`（自本次重构起）。
 
@@ -33,7 +33,7 @@
 
 重构后：
 
-- **9 个协议**，每个单一职责，命名更接近工业界共识（`Authenticator`、`Provider`、`Repository`、`Service`）。
+- **10 个协议**，每个单一职责，命名更接近工业界共识（`Authenticator`、`Provider`、`Repository`、`Service`）。
 - **一个 `AdapterLifespan`** 取代 14 个 hook 槽。
 - **不可变 `GatewayAdapters` bundle**，全程 `slots=True, frozen=True`，纯 dataclass 类型。
 - **`OutboundAuthProvider`** 一次性收拢"请求身份 / 目标 URL / 场景"上下文，并发判断。
@@ -62,7 +62,7 @@
 
 ---
 
-## 3. 协议映射表（13 → 9）
+## 3. 协议映射表（13 → 10）
 
 | # | 旧协议（0.1.x） | 新协议（0.2.0） | 主要改动 |
 |---|----------------|------------------|---------|
@@ -75,6 +75,7 @@
 | 7 | `SessionStoreProtocol` + `DatabaseProtocol` | `SessionRepository` | 合并；`DatabaseProtocol` 退入内部 |
 | 8 | `EvalResultStorage` | `EvalResultRepository` | 仅改名 |
 | 9 | `ConfigProvider` | `ConfigProvider` | **保持不变** |
+| 10 | （新增） | `ToolScriptStore` | 上传型 tool 脚本存储；详见 §4.6 |
 
 外加两个新增 dataclass：
 
@@ -198,6 +199,23 @@ class SessionRepository(Protocol):
 - 新增 `healthcheck()` —— 不需要做事的实现可以直接 `pass`，但请勿不实现（Pyright 会标红）。
 - 如果你之前直接实现过 `DatabaseProtocol`，请把暴露的 SQL 接口藏起来，改为只实现 `SessionRepository`。
 
+### 4.6 `ToolScriptStore` — 文件型 tool 脚本存储（新增）
+
+0.2.0 引入"上传 `.py` 脚本生成 tool"的能力。`ToolScriptStore` 协议定义每个 app 怎么把脚本文件落到磁盘上：
+
+```python
+class ToolScriptStore(Protocol):
+    async def save(self, name: str, content: bytes, overwrite: bool = False) -> str: ...
+    async def read(self, name: str) -> bytes | None: ...
+    async def delete(self, name: str) -> bool: ...
+    async def exists(self, name: str) -> bool: ...
+    async def close(self) -> None: ...
+```
+
+- `save()` 返回脚本落盘的绝对路径（用作 `ExternalScriptToolBinding.script_path`）。
+- 不需要文件型 tool 的部署可以传 `None`：`create_app()` 在 `tool_script_store=None` 时会让 `/api/v1/management/tools/upload` 端点返回 `501 Not Implemented`。
+- orch-app 默认实现：`LocalFileScriptStore`，存到 `./data/scripts/`；mh-local 默认实现：`LocalScriptStore`，存到 `~/.config/mh-local/scripts/`。
+
 ---
 
 ## 5. 迁移步骤（建议 5 步走）
@@ -312,6 +330,7 @@ app = create_app(settings=settings, adapters=adapter_lifespan)
 | `database_provider` | （删除——由 `sessions` 内部使用） |
 | `eval_result_storage` | `eval_results` |
 | `secret_provider` | `config_provider`（如需） |
+| （新增） | `tool_script_store`（上传型 tool 的脚本存储；不需要可传 `None`） |
 | `settings` | `settings`（保持不变） |
 
 > **强烈建议**：把 `app.state.adapters.<slot>` 全部封装到一个 `Depends(get_adapters)` 的依赖项里，统一入口，避免散落。
@@ -343,6 +362,7 @@ from mh_gateway.adapters import (
     OutboundAuthProvider,
     OutboundRequestContext,
     SessionRepository,
+    ToolScriptStore,
     UserAuthenticator,
     UserIdentity,
 )
@@ -422,6 +442,18 @@ class MyConfigProvider(ConfigProvider):
     async def get(self, key: str) -> str | None: ...
 
 
+class MyToolScriptStore(ToolScriptStore):
+    """把上传的 tool 脚本存到企业私有的对象存储 / 配置中心。"""
+
+    async def save(self, name: str, content: bytes, overwrite: bool = False) -> str:
+        ...
+
+    async def read(self, name: str) -> bytes | None: ...
+    async def delete(self, name: str) -> bool: ...
+    async def exists(self, name: str) -> bool: ...
+    async def close(self) -> None: ...
+
+
 # ── 2. 装配入口 ──────────────────────────────────────────────────────────────
 
 
@@ -448,10 +480,13 @@ def build_my_lifespan(
         await sessions.warmup() if hasattr(sessions, "warmup") else None
         eval_results: EvalResultRepository | None = MyEvalStorage() if settings.enable_eval else None
         config_provider = MyConfigProvider()
+        # tool_script_store 可选：None 时上传端点会返回 501
+        tool_script_store: ToolScriptStore | None = MyToolScriptStore()
 
         resources.extend([
             user_auth, authorization, m2m_auth, outbound_auth,
             metadata, llm, sessions, eval_results, config_provider,
+            tool_script_store,
         ])
 
         bundle = GatewayAdapters(
@@ -465,6 +500,7 @@ def build_my_lifespan(
             sessions=sessions,
             eval_results=eval_results,
             config_provider=config_provider,
+            tool_script_store=tool_script_store,
         )
 
         try:
@@ -521,6 +557,7 @@ app = create_my_app(settings)
 | `database_provider` | （访问 `sessions`，数据库是它的私有细节） |
 | `eval_result_storage` | `eval_results` |
 | `secret_provider` | `config_provider` |
+| （新增） | `tool_script_store`（上传型 tool 脚本存储；不需要可传 `None`） |
 
 > `app.state.adapters` 从可变对象变为 `@dataclass(frozen=True, slots=True)` 的不可变 bundle —— **运行时不可再赋新值**；只能整体替换。
 
@@ -678,6 +715,7 @@ from mh_gateway.adapters import SecretResolver        # ← 改 ConfigProvider
 from mh_gateway.adapters import ExtraHeadersProvider  # ← 删除（合并入 llm）
 from mh_gateway.app import LifespanHook               # ← 删除（直接用 AdapterLifespan）
 from mh_gateway.llm import ExtraHeadersProvider       # ← 删除（同上）
+from mh_gateway.adapters import ToolScriptStore       # ← 新增；上传型 tool 脚本存储
 ```
 
 ### 10.2 OpenAPI 兼容性保证
