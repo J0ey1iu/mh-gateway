@@ -1,5 +1,16 @@
 # Change Log
 
+## 0.1.0a9
+
+- chore: bump `minimal-harness` pin from `==0.7.0a7` to `==0.7.0a8`
+  and `mh-service-kit` pin from `==0.1.1a6` to `==0.1.1a7`
+  for lockstep pre-release alignment.
+
+## 0.1.0a8
+
+- chore: lockstep pre-release bump with the SDK chain
+  (`minimal-harness` 0.7.0a8, `mh-service-kit` 0.1.1a6).
+
 ## 0.1.0a7
 
 - fix: declare `python-multipart>=0.0.20` as a direct
