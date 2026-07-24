@@ -23,6 +23,7 @@ from minimal_harness.types import (
     LLMStart,
     LocalToolBinding,
     RemoteToolBinding,
+    ToolCompactionSettings,
     ToolMetadata,
 )
 
@@ -304,6 +305,18 @@ def _resolve_compaction_settings(agent_dict: dict) -> CompactionSettings | None:
     return result if result else None
 
 
+def _resolve_tool_compaction_settings(agent_dict: dict) -> ToolCompactionSettings | None:
+    raw = agent_dict.get("tool_compaction")
+    if not raw or not isinstance(raw, dict):
+        return None
+    result: ToolCompactionSettings = {}
+    if "prompt_token_threshold" in raw:
+        result["prompt_token_threshold"] = int(raw["prompt_token_threshold"])
+    if "keep_recent" in raw:
+        result["keep_recent"] = int(raw["keep_recent"])
+    return result if result else None
+
+
 def _make_extra_headers_provider(
     provider: OutboundAuthProvider,
     request: Request,
@@ -488,6 +501,7 @@ async def create_runtime(
             model=a.get("model", ""),
             llm_config=a.get("llm_config", {}),
             compaction=_resolve_compaction_settings(a),
+            tool_compaction=_resolve_tool_compaction_settings(a),
         )
         await agent_registry.register(agent_meta)
         all_agents.append(agent_meta)

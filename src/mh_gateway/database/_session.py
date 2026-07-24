@@ -74,6 +74,8 @@ class Session(Protocol):
     ) -> AsyncIterator[CompactionEvent]: ...
     def reset_message_usage(self) -> None: ...
 
+    async def strip_tool_call_pairs(self) -> AsyncIterator[CompactionEvent]: ...
+
 
 class SimpleSession:
     """A basic Session implementation backed by ConversationMemory."""
@@ -147,3 +149,7 @@ class SimpleSession:
 
     def reset_message_usage(self) -> None:
         self._memory.reset_message_usage()
+
+    async def strip_tool_call_pairs(self) -> Any:
+        async for evt in self._memory.strip_tool_call_pairs():
+            yield evt
