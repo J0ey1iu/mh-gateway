@@ -342,6 +342,8 @@ async def _tool_binding(
 ) -> RemoteToolBinding | LocalToolBinding | ExternalScriptToolBinding:
     if "script_path" in meta and meta["script_path"]:
         return ExternalScriptToolBinding(script_path=meta["script_path"])
+    if "_fn" in meta and meta["_fn"]:
+        return LocalToolBinding(fn=meta["_fn"])
     if "endpoint_url" in meta and meta["endpoint_url"]:
         url = meta["endpoint_url"]
         if request and url.startswith("/"):
@@ -368,8 +370,9 @@ async def _tool_binding(
             timeout=60.0,
             verify_ssl=verify_agent_tool_ssl,
         )
-    fn = meta.get("_fn")
-    return LocalToolBinding(fn=fn)
+    raise ValueError(
+        f"No valid binding for tool '{name}': missing script_path, _fn, or endpoint_url"
+    )
 
 
 def _apply_permission_filter(
