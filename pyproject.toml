@@ -1,13 +1,13 @@
 [project]
 name = "mh-gateway"
-version = "0.1.0a12"
+version = "0.1.0a13"
 description = "Orchestration Gateway SDK — load scenarios, route agents, stream events. Built on top of minimal-harness."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
-    "minimal-harness==0.7.0a12",
-    "mh-service-kit==0.1.1a12",
+    "minimal-harness==0.7.0a13",
+    "mh-service-kit==0.1.1a13",
     "python-multipart>=0.0.20",
 ] 
 
@@ -19,7 +19,7 @@ build-backend = "uv_build"
 where = ["src"]
 
 [tool.setuptools.package-data]
-mh_gateway = ["py.typed", "static/**"]
+mh_gateway = ["py.typed"]
 
 [tool.uv.sources]
 minimal-harness = { workspace = true }
