@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from mh_service_kit.sse import serialize_event
-from minimal_harness.agent.factory import DefaultAgentFactory
+from minimal_harness.agent.factory import AgentFactory
 from minimal_harness.memory import ConversationMemory
 from minimal_harness.tool.factory import DefaultToolFactory
 from minimal_harness.types import AgentMetadata, ToolMetadata
@@ -183,7 +183,7 @@ async def run_agent(
         [LLMResolveSpec(agent=target_meta, user=identity or "")]
     )
 
-    factory = DefaultAgentFactory(
+    factory = AgentFactory(
         llm_provider_resolver=_agent_llm_resolver,
     )
     agent = factory.create(

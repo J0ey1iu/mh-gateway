@@ -17,13 +17,10 @@ import logging
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 
 from mh_gateway.adapters import (
     AuthorizationProvider,
@@ -311,29 +308,5 @@ def create_app(
             for r in dev_routers:
                 app.include_router(r)
 
-        static_dir = Path(__file__).resolve().parent / "static"
-        if static_dir.is_dir():
-            app.mount(
-                "/",
-                StaticFiles(directory=str(static_dir), html=True),
-                name="frontend",
-            )
-
-            @app.middleware("http")
-            async def spa_fallback(request, call_next):
-                response = await call_next(request)
-                if (
-                    response.status_code == 404
-                    and request.method == "GET"
-                    and request.url.path != "/api"
-                    and not request.url.path.startswith("/api/")
-                    and not request.url.path.startswith("/docs")
-                    and not request.url.path.startswith("/openapi")
-                    and not request.url.path.startswith("/redoc")
-                ):
-                    index_path = static_dir / "index.html"
-                    if index_path.is_file():
-                        return FileResponse(str(index_path))
-                return response
 
     return app
