@@ -58,19 +58,12 @@ class LLMProviderConfig:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "LLMProviderConfig":
-        return cls(
-            name=data.get("name", ""),
-            provider_type=data.get("provider_type", "openai"),
-            api_key=data.get("api_key", ""),
-            base_url=data.get("base_url", ""),
-            default_model=data.get("default_model", ""),
-            description=data.get("description", ""),
-            models=list(data.get("models", [])),
-            created_at=data.get("created_at", ""),
-            updated_at=data.get("updated_at", ""),
-            created_by=data.get("created_by", ""),
-            updated_by=data.get("updated_by", ""),
-        )
+        # provider_type defaults to "openai" when absent (backward compat)
+        d = dict(data)
+        d.setdefault("provider_type", "openai")
+        if "models" in d:
+            d["models"] = list(d["models"])
+        return cls(**d)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
