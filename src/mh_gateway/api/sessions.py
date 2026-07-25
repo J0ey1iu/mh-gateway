@@ -11,8 +11,8 @@ from mh_gateway.api.dependencies import (
     resolve_request_permissions,
 )
 from mh_gateway.adapters import LLMResolveSpec
-from mh_gateway.api.locale import parse_locale, resolve_display_name
-from minimal_harness.agent._compaction import build_chat_payload
+from mh_gateway.api.locale import parse_locale, resolve_display_name, resolve_locale
+from minimal_harness.agent._compaction import build_chat_payload, _resolve_localised_prompt
 from minimal_harness.types import AgentMetadata
 from mh_gateway.services.database import get_session_store
 from mh_gateway.services.runtime_service import (
@@ -231,7 +231,32 @@ async def compact_session(
             LLMResolveSpec(agent=target_meta, user=user_id)
         )
         all_msgs = session.get_all_messages()
-        system_prompt = agent_meta.get("system_prompt", "") or ""
+        locale = parse_locale(request.headers.get("accept-language"))
+        system_prompt = resolve_locale(
+            agent_meta.get("system_prompt", "") or "",
+            agent_meta.get("system_prompt_locale"),
+            locale,
+        )
+
+        # Resolve locale-aware compaction prompt from agent settings.
+        # agent_type == "compacting" stores settings in the "compaction" field,
+        # agent_type == "tool_compacting" stores them in the "tool_compaction" field.
+        # Check both and merge, with tool_compaction taking precedence when present.
+        agent_type = agent_meta.get("agent_type", "simple")
+        compaction_settings: dict = {}
+        if agent_type == "tool_compacting":
+            raw = agent_meta.get("tool_compaction")
+            if isinstance(raw, dict):
+                compaction_settings = raw
+        else:
+            raw = agent_meta.get("compaction")
+            if isinstance(raw, dict):
+                compaction_settings = raw
+        summary_prompt = _resolve_localised_prompt(
+            compaction_settings.get("compaction_prompt"),
+            compaction_settings.get("compaction_prompt_locale"),
+            locale,
+        )
 
         async def _stream_with_lock():
             content_accumulated = ""
@@ -250,7 +275,12 @@ async def compact_session(
                         },
                     )
                     start_time = __import__("time").time()
-                    payload = build_chat_payload(system_prompt, list(all_msgs), None)
+                    payload = build_chat_payload(
+                        system_prompt,
+                        list(all_msgs),
+                        existing_summary=None,
+                        summary_prompt=summary_prompt,
+                    )
                     response = await llm_provider.chat(messages=payload, tools=[])  # type: ignore[arg-type]
                     async for delta in response:
                         if not delta:

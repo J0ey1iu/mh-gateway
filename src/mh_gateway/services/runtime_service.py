@@ -302,6 +302,10 @@ def _resolve_compaction_settings(agent_dict: dict) -> CompactionSettings | None:
         result["prompt_token_threshold"] = int(raw["prompt_token_threshold"])
     if "keep_recent" in raw:
         result["keep_recent"] = int(raw["keep_recent"])
+    if "compaction_prompt" in raw:
+        result["compaction_prompt"] = str(raw["compaction_prompt"])
+    if "compaction_prompt_locale" in raw:
+        result["compaction_prompt_locale"] = str(raw["compaction_prompt_locale"])
     return result if result else None
 
 
@@ -314,6 +318,10 @@ def _resolve_tool_compaction_settings(agent_dict: dict) -> ToolCompactionSetting
         result["prompt_token_threshold"] = int(raw["prompt_token_threshold"])
     if "keep_recent" in raw:
         result["keep_recent"] = int(raw["keep_recent"])
+    if "compaction_prompt" in raw:
+        result["compaction_prompt"] = str(raw["compaction_prompt"])
+    if "compaction_prompt_locale" in raw:
+        result["compaction_prompt_locale"] = str(raw["compaction_prompt_locale"])
     return result if result else None
 
 
