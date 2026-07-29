@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from mh_gateway.adapters import Feedback
@@ -1217,10 +1218,14 @@ async def export_feedback(
     date_from: str | None = Query(None, description="Start date (ISO)"),
     date_to: str | None = Query(None, description="End date (ISO)"),
     user_id: str = Depends(require_permission("manage:feedback:*")),
-) -> str:
+) -> Response:
     adapters = request.app.state.adapters
     if adapters.feedback is None:
-        return "feedback_id,session_id,user_id,feedback_type,source,status,comment,rating,created_at\n"
+        return Response(
+            content="feedback_id,session_id,user_id,feedback_type,source,status,comment,rating,created_at\n",
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=feedback.csv"},
+        )
     items, _ = await adapters.feedback.list(
         page=1,
         page_size=999999,
@@ -1239,4 +1244,8 @@ async def export_feedback(
             f'{fb.feedback_type},{fb.source},{fb.status},'
             f'"{comment}",{fb.rating or ""},{fb.created_at}'
         )
-    return "\n".join(lines)
+    return Response(
+        content="\n".join(lines),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=feedback.csv"},
+    )
