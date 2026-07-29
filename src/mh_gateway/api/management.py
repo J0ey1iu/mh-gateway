@@ -8,6 +8,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
 
+from mh_gateway.adapters import Feedback
+
 from mh_gateway.api.dependencies import require_permission
 from mh_gateway.llm import LLMProviderConfig
 from minimal_harness.agent.factory import get_builtin_agent_type_schemas
@@ -1010,3 +1012,111 @@ async def upload_tool_scripts_batch(
             )
 
     return UploadToolsResponse(created=created, errors=errors)
+
+
+# ── Feedback Management ──
+
+
+class FeedbackResponse(BaseModel):
+    feedback_id: str
+    session_id: str
+    target_type: str
+    target_id: str
+    user_id: str
+    feedback_type: str
+    rating: int | None
+    comment: str | None
+    category: str | None
+    source: str
+    metadata: dict[str, Any]
+    created_at: str
+
+
+@router.get("/feedback")
+def _register_feedback_list_docs():
+    pass
+
+
+@router.get("/feedback", response_model=ListResponse, include_in_schema=True)
+async def list_feedback(
+    request: Request,
+    q: str | None = Query(None, description="Search query (comment/user_id)"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+    feedback_type: str | None = Query(None, description="Filter by type: thumbs_up / thumbs_down"),
+    source: str | None = Query(None, description="Filter by source: ui_button / agent_tool"),
+    date_from: str | None = Query(None, description="Start date (ISO)"),
+    date_to: str | None = Query(None, description="End date (ISO)"),
+    user_id: str = Depends(require_permission("manage:feedback:*")),
+) -> ListResponse:
+    adapters = request.app.state.adapters
+    if adapters.feedback is None:
+        return ListResponse(items=[], total=0, page=page, page_size=page_size)
+    items, total = await adapters.feedback.list(
+        page=page,
+        page_size=page_size,
+        q=q,
+        feedback_type=feedback_type,
+        source=source,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    return ListResponse(
+        items=[_feedback_to_dict(fb) for fb in items],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get("/feedback/{feedback_id}/session")
+async def get_feedback_session(
+    request: Request,
+    feedback_id: str,
+    user_id: str = Depends(require_permission("manage:feedback:*")),
+) -> dict[str, Any]:
+    adapters = request.app.state.adapters
+    if adapters.feedback is None:
+        raise HTTPException(501, "Feedback storage not configured")
+
+    fb = await adapters.feedback.get(feedback_id)
+    if fb is None:
+        raise HTTPException(404, "Feedback not found")
+
+    # get session info
+    session = await adapters.sessions.get_session(fb.session_id)
+    session_dict = {
+        "session_id": fb.session_id,
+        "user_id": fb.user_id,
+    }
+    if session:
+        session_dict["title"] = getattr(session, "title", "")
+        session_dict["created_at"] = getattr(session, "created_at", "")
+
+    # get messages up to target
+    messages = await adapters.sessions.get_session_messages(fb.session_id)
+
+    return {
+        "session": session_dict,
+        "messages": messages,
+        "highlight_target_type": fb.target_type,
+        "highlight_target_id": fb.target_id,
+        "feedback": _feedback_to_dict(fb),
+    }
+
+
+def _feedback_to_dict(fb: Feedback) -> dict[str, Any]:
+    return {
+        "feedback_id": fb.feedback_id,
+        "session_id": fb.session_id,
+        "target_type": fb.target_type,
+        "target_id": fb.target_id,
+        "user_id": fb.user_id,
+        "feedback_type": fb.feedback_type,
+        "rating": fb.rating,
+        "comment": fb.comment,
+        "category": fb.category,
+        "source": fb.source,
+        "metadata": fb.metadata,
+        "created_at": fb.created_at,
+    }
