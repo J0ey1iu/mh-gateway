@@ -1092,27 +1092,28 @@ async def get_feedback_session(
         session_dict["title"] = getattr(session, "title", "")
         session_dict["created_at"] = getattr(session, "created_at", "")
 
-    # get messages with computed IDs for frontend matching
-    raw_messages = await adapters.sessions.get_session_messages(fb.session_id)
-    messages = []
-    msg_idx = 0
-    for m in raw_messages:
-        role = m.get("role", "")
-        if role == "tool":
-            # parent message carries the ID; tool results reference parent
-            messages.append({**m, "id": f"msg-{msg_idx}"})
-            # don't bump msg_idx for tool results (they belong to assistant)
-        elif role == "reasoning":
-            messages.append({**m, "id": f"msg-{msg_idx}"})
-        else:
-            messages.append({**m, "id": f"msg-{msg_idx}"})
-            msg_idx += 1
+    # get messages (enriched items) so IDs match frontend convention
+    messages = list(adapters.sessions.get_messages_as_items(session))
+
+    # find which item index matches the feedback target
+    highlight_idx = -1
+    for i, m in enumerate(messages):
+        if fb.target_type == "message" and fb.target_id:
+            if m.get("id") == fb.target_id:
+                highlight_idx = i
+                break
+        elif fb.target_type == "tool_call" and fb.target_id:
+            tool_calls = m.get("tool_calls") or []
+            if any(tc.get("id") == fb.target_id for tc in tool_calls):
+                highlight_idx = i
+                break
 
     return {
         "session": session_dict,
         "messages": messages,
         "highlight_target_type": fb.target_type,
         "highlight_target_id": fb.target_id,
+        "highlight_item_index": highlight_idx,
         "feedback": _feedback_to_dict(fb),
     }
 
