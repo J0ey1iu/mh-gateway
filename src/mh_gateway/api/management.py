@@ -1100,12 +1100,18 @@ async def get_feedback_session(
     for i, m in enumerate(messages):
         if fb.target_type == "message" and fb.target_id:
             if m.get("id") == fb.target_id:
-                highlight_idx = i
+                highlight_idx = i + 1
                 break
         elif fb.target_type == "tool_call" and fb.target_id:
             tool_calls = m.get("tool_calls") or []
             if any(tc.get("id") == fb.target_id for tc in tool_calls):
-                highlight_idx = i
+                highlight_idx = i + 1
+                break
+    else:
+        # fallback: try matching by target_id as a message id
+        for i, m in enumerate(messages):
+            if m.get("id") == fb.target_id:
+                highlight_idx = i + 1
                 break
 
     return {
