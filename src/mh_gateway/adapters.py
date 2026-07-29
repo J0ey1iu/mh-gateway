@@ -75,6 +75,7 @@ class FeedbackRepository(Protocol):
     ) -> tuple[list[Feedback], int]: ...  # (items, total)
     async def close(self) -> None: ...
 
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from minimal_harness.llm.llm import LLMProvider
     from minimal_harness.types import AgentMetadata

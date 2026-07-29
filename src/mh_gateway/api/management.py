@@ -1032,19 +1032,18 @@ class FeedbackResponse(BaseModel):
     created_at: str
 
 
-@router.get("/feedback")
-def _register_feedback_list_docs():
-    pass
-
-
-@router.get("/feedback", response_model=ListResponse, include_in_schema=True)
+@router.get("/feedback", response_model=ListResponse)
 async def list_feedback(
     request: Request,
     q: str | None = Query(None, description="Search query (comment/user_id)"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
-    feedback_type: str | None = Query(None, description="Filter by type: thumbs_up / thumbs_down"),
-    source: str | None = Query(None, description="Filter by source: ui_button / agent_tool"),
+    feedback_type: str | None = Query(
+        None, description="Filter by type: thumbs_up / thumbs_down"
+    ),
+    source: str | None = Query(
+        None, description="Filter by source: ui_button / agent_tool"
+    ),
     date_from: str | None = Query(None, description="Start date (ISO)"),
     date_to: str | None = Query(None, description="End date (ISO)"),
     user_id: str = Depends(require_permission("manage:feedback:*")),

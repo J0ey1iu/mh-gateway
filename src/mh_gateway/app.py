@@ -310,5 +310,4 @@ def create_app(
             for r in dev_routers:
                 app.include_router(r)
 
-
     return app
