@@ -312,6 +312,29 @@ class _MockFeedbackRepo:
     async def get(self, feedback_id):
         return self._items.get(feedback_id)
 
+    async def delete(self, feedback_id):
+        if feedback_id in self._items:
+            del self._items[feedback_id]
+            return True
+        return False
+
+    async def delete_many(self, feedback_ids):
+        count = 0
+        for fid in feedback_ids:
+            if fid in self._items:
+                del self._items[fid]
+                count += 1
+        return count
+
+    async def update_status(self, feedback_id, status):
+        fb = self._items.get(feedback_id)
+        if fb is None:
+            return None
+        from dataclasses import replace
+        fb = replace(fb, status=status)
+        self._items[feedback_id] = fb
+        return fb
+
     async def list(
         self,
         *,
@@ -320,6 +343,7 @@ class _MockFeedbackRepo:
         q=None,
         feedback_type=None,
         source=None,
+        status=None,
         date_from=None,
         date_to=None,
     ):
@@ -336,6 +360,8 @@ class _MockFeedbackRepo:
             items = [fb for fb in items if fb.feedback_type == feedback_type]
         if source:
             items = [fb for fb in items if fb.source == source]
+        if status:
+            items = [fb for fb in items if fb.status == status]
         total = len(items)
         start = (page - 1) * page_size
         end = start + page_size
