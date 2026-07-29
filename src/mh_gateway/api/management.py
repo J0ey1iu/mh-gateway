@@ -1095,23 +1095,17 @@ async def get_feedback_session(
     # get messages (enriched items) so IDs match frontend convention
     messages = list(adapters.sessions.get_messages_as_items(session))
 
-    # find which item index matches the feedback target
-    highlight_idx = -1
-    for i, m in enumerate(messages):
+    # find which message matches the feedback target
+    highlight_message_id = None
+    for m in messages:
         if fb.target_type == "message" and fb.target_id:
             if m.get("id") == fb.target_id:
-                highlight_idx = i + 1
+                highlight_message_id = m.get("id")
                 break
         elif fb.target_type == "tool_call" and fb.target_id:
             tool_calls = m.get("tool_calls") or []
             if any(tc.get("id") == fb.target_id for tc in tool_calls):
-                highlight_idx = i + 1
-                break
-    else:
-        # fallback: try matching by target_id as a message id
-        for i, m in enumerate(messages):
-            if m.get("id") == fb.target_id:
-                highlight_idx = i + 1
+                highlight_message_id = m.get("id")
                 break
 
     return {
@@ -1119,7 +1113,7 @@ async def get_feedback_session(
         "messages": messages,
         "highlight_target_type": fb.target_type,
         "highlight_target_id": fb.target_id,
-        "highlight_item_index": highlight_idx,
+        "highlight_message_id": highlight_message_id or fb.target_id,
         "feedback": _feedback_to_dict(fb),
     }
 
