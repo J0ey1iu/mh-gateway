@@ -353,8 +353,7 @@ class _MockFeedbackRepo:
             items = [
                 fb
                 for fb in items
-                if (fb.comment and q_lower in fb.comment.lower())
-                or (fb.user_id and q_lower in fb.user_id.lower())
+                if fb.user_id and q_lower in fb.user_id.lower()
             ]
         if feedback_type:
             items = [fb for fb in items if fb.feedback_type == feedback_type]

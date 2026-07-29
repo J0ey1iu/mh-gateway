@@ -1036,7 +1036,7 @@ class FeedbackResponse(BaseModel):
 @router.get("/feedback", response_model=ListResponse)
 async def list_feedback(
     request: Request,
-    q: str | None = Query(None, description="Search query (comment/user_id)"),
+    q: str | None = Query(None, description="Search by user ID"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
     feedback_type: str | None = Query(
