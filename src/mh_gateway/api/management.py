@@ -1103,8 +1103,9 @@ async def get_feedback_session(
                 highlight_message_id = m.get("id")
                 break
         elif fb.target_type == "tool_call" and fb.target_id:
-            tool_calls = m.get("tool_calls") or []
-            if any(tc.get("id") == fb.target_id for tc in tool_calls):
+            # highlight the tool RESULT message (role="tool"), not the
+            # assistant message that initiated the call
+            if m.get("role") == "tool" and m.get("tool_call_id") == fb.target_id:
                 highlight_message_id = m.get("id")
                 break
 
