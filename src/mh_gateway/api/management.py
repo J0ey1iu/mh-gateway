@@ -1223,7 +1223,7 @@ async def export_feedback(
         return "feedback_id,session_id,user_id,feedback_type,source,status,comment,rating,created_at\n"
     items, _ = await adapters.feedback.list(
         page=1,
-        page_size=0,
+        page_size=999999,
         q=q,
         feedback_type=feedback_type,
         source=source,
