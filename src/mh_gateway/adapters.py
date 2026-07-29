@@ -49,6 +49,7 @@ class Feedback:
     comment: str | None = None
     category: str | None = None
     source: str = "ui_button"  # "ui_button" | "agent_tool"
+    status: str = "new"  # "new" | "analyzing" | "optimized" | "deployed"
     metadata: dict = field(default_factory=dict)
     created_at: str = ""
 
@@ -62,6 +63,11 @@ class FeedbackRepository(Protocol):
 
     async def save(self, feedback: Feedback) -> Feedback: ...
     async def get(self, feedback_id: str) -> Feedback | None: ...
+    async def delete(self, feedback_id: str) -> bool: ...
+    async def delete_many(self, feedback_ids: list[str]) -> int: ...
+    async def update_status(
+        self, feedback_id: str, status: str
+    ) -> Feedback | None: ...
     async def list(
         self,
         *,
@@ -70,6 +76,7 @@ class FeedbackRepository(Protocol):
         q: str | None = None,
         feedback_type: str | None = None,
         source: str | None = None,
+        status: str | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
     ) -> tuple[list[Feedback], int]: ...  # (items, total)

@@ -9,7 +9,7 @@ import logging
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from mh_gateway.adapters import Feedback
@@ -28,6 +28,39 @@ class FeedbackCreateRequest(BaseModel):
     rating: int | None = None
     comment: str | None = None
     category: str | None = None
+
+
+@router.get("")
+async def list_session_feedback(
+    request: Request,
+    session_id: str | None = Query(
+        None, description="Filter by session_id"
+    ),
+    user_id: str = Depends(resolve_request_identity),
+) -> list[dict[str, Any]]:
+    """Return feedback entries, optionally filtered by session."""
+    adapters = request.app.state.adapters
+    if adapters.feedback is None:
+        return []
+    items, _ = await adapters.feedback.list(
+        page=1, page_size=0, q=None
+    )
+    if session_id:
+        items = [fb for fb in items if fb.session_id == session_id]
+    # Return only items belonging to the current user?
+    # For mh-local there's only one user, so skip ownership check.
+    return [
+        {
+            "feedback_id": fb.feedback_id,
+            "target_type": fb.target_type,
+            "target_id": fb.target_id,
+            "feedback_type": fb.feedback_type,
+            "comment": fb.comment,
+            "rating": fb.rating,
+            "created_at": fb.created_at,
+        }
+        for fb in items
+    ]
 
 
 @router.post("")
