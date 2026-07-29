@@ -25,6 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from mh_gateway.adapters import (
     AuthorizationProvider,
     EvalResultRepository,
+    FeedbackRepository,
     LLMProviderService,
     M2MAuthenticator,
     MetadataRepository,
@@ -81,6 +82,7 @@ class GatewayAdapters:
     sessions: SessionRepository
     eval_results: EvalResultRepository | None = None
     tool_script_store: ToolScriptStore | None = None
+    feedback: FeedbackRepository | None = None
 
 
 class AdapterLifespan(Protocol):

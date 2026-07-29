@@ -31,6 +31,50 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
 
+
+# ── Feedback ───────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class Feedback:
+    """User feedback on a message or tool call."""
+
+    feedback_id: str
+    session_id: str
+    target_type: str  # "message" | "tool_call"
+    target_id: str  # message.id | tool_call.id
+    user_id: str
+    feedback_type: str  # "thumbs_up" | "thumbs_down"
+    rating: int | None = None  # 1-5
+    comment: str | None = None
+    category: str | None = None
+    source: str = "ui_button"  # "ui_button" | "agent_tool"
+    metadata: dict = field(default_factory=dict)
+    created_at: str = ""
+
+
+@runtime_checkable
+class FeedbackRepository(Protocol):
+    """Persistent feedback storage.
+
+    Implementations may use SQL, JSONL files, or any other backend.
+    """
+
+    async def save(self, feedback: Feedback) -> Feedback: ...
+    async def get(self, feedback_id: str) -> Feedback | None: ...
+    async def list(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        q: str | None = None,
+        feedback_type: str | None = None,
+        source: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> tuple[list[Feedback], int]: ...  # (items, total)
+    async def close(self) -> None: ...
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from minimal_harness.llm.llm import LLMProvider
     from minimal_harness.types import AgentMetadata
@@ -487,6 +531,8 @@ __all__ = [
     "AuthorizationProvider",
     "ConfigProvider",
     "EvalResultRepository",
+    "Feedback",
+    "FeedbackRepository",
     "LLMProviderService",
     "LLMResolveSpec",
     "M2MAuthenticator",
