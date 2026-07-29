@@ -1092,8 +1092,21 @@ async def get_feedback_session(
         session_dict["title"] = getattr(session, "title", "")
         session_dict["created_at"] = getattr(session, "created_at", "")
 
-    # get messages up to target
-    messages = await adapters.sessions.get_session_messages(fb.session_id)
+    # get messages with computed IDs for frontend matching
+    raw_messages = await adapters.sessions.get_session_messages(fb.session_id)
+    messages = []
+    msg_idx = 0
+    for m in raw_messages:
+        role = m.get("role", "")
+        if role == "tool":
+            # parent message carries the ID; tool results reference parent
+            messages.append({**m, "id": f"msg-{msg_idx}"})
+            # don't bump msg_idx for tool results (they belong to assistant)
+        elif role == "reasoning":
+            messages.append({**m, "id": f"msg-{msg_idx}"})
+        else:
+            messages.append({**m, "id": f"msg-{msg_idx}"})
+            msg_idx += 1
 
     return {
         "session": session_dict,
