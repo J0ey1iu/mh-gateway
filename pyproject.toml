@@ -1,13 +1,13 @@
 [project]
 name = "mh-gateway"
-version = "0.1.0a15"
+version = "0.1.0"
 description = "Orchestration Gateway SDK — load scenarios, route agents, stream events. Built on top of minimal-harness."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
-    "minimal-harness==0.7.0a15",
-    "mh-service-kit==0.1.1a15",
+    "minimal-harness>=0.7.0",
+    "mh-service-kit>=0.1.1",
     "python-multipart>=0.0.20",
 ] 
 
