@@ -1025,10 +1025,10 @@ class FeedbackResponse(BaseModel):
     target_id: str
     user_id: str
     feedback_type: str
-    rating: int | None
     comment: str | None
     category: str | None
     source: str
+    agent_name: str
     metadata: dict[str, Any]
     created_at: str
 
@@ -1092,6 +1092,7 @@ async def get_feedback_session(
     session_dict = {
         "session_id": fb.session_id,
         "user_id": fb.user_id,
+        "agent_name": fb.agent_name,
     }
     if session:
         session_dict["title"] = getattr(session, "title", "")
@@ -1132,11 +1133,11 @@ def _feedback_to_dict(fb: Feedback) -> dict[str, Any]:
         "target_id": fb.target_id,
         "user_id": fb.user_id,
         "feedback_type": fb.feedback_type,
-        "rating": fb.rating,
         "comment": fb.comment,
         "category": fb.category,
         "source": fb.source,
         "status": fb.status,
+        "agent_name": fb.agent_name,
         "metadata": fb.metadata,
         "created_at": fb.created_at,
     }
@@ -1222,7 +1223,7 @@ async def export_feedback(
     adapters = request.app.state.adapters
     if adapters.feedback is None:
         return Response(
-            content="feedback_id,session_id,user_id,feedback_type,source,status,comment,rating,created_at\n",
+            content="feedback_id,session_id,user_id,feedback_type,source,status,comment,created_at\n",
             media_type="text/csv",
             headers={"Content-Disposition": "attachment; filename=feedback.csv"},
         )
@@ -1236,13 +1237,13 @@ async def export_feedback(
         date_from=date_from,
         date_to=date_to,
     )
-    lines = ["feedback_id,session_id,user_id,feedback_type,source,status,comment,rating,created_at"]
+    lines = ["feedback_id,session_id,user_id,agent_name,feedback_type,source,status,comment,created_at"]
     for fb in items:
         comment = (fb.comment or "").replace('"', '""')
         lines.append(
-            f'{fb.feedback_id},{fb.session_id},{fb.user_id},'
+            f'{fb.feedback_id},{fb.session_id},{fb.user_id},{fb.agent_name},'
             f'{fb.feedback_type},{fb.source},{fb.status},'
-            f'"{comment}",{fb.rating or ""},{fb.created_at}'
+            f'"{comment}",{fb.created_at}'
         )
     return Response(
         content="\n".join(lines),

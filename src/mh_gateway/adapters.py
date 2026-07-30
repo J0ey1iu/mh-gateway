@@ -45,10 +45,10 @@ class Feedback:
     target_id: str  # message.id | tool_call.id
     user_id: str
     feedback_type: str  # "thumbs_up" | "thumbs_down"
-    rating: int | None = None  # 1-5
     comment: str | None = None
     category: str | None = None
     source: str = "ui_button"  # "ui_button" | "agent_tool"
+    agent_name: str = ""  # agent identifier, filled from session at creation time
     status: str = "new"  # "new" | "analyzing" | "optimized" | "deployed"
     metadata: dict = field(default_factory=dict)
     created_at: str = ""

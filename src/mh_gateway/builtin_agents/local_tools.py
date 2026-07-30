@@ -167,7 +167,6 @@ async def bash_fn(
 
 async def submit_feedback_fn(
     type: str = "",
-    rating: int | None = None,
     comment: str = "",
     category: str = "",
     target_type: str = "",
@@ -203,6 +202,15 @@ async def submit_feedback_fn(
 
     from mh_gateway.adapters import Feedback
 
+    # resolve agent_name from the session
+    agent_name = ""
+    try:
+        session = await adapters.sessions.get_session(session_id)
+        if session:
+            agent_name = getattr(session, "agent_name", "") or ""
+    except Exception:
+        pass
+
     feedback = Feedback(
         feedback_id=f"fb_{uuid4().hex[:12]}",
         session_id=session_id,
@@ -210,10 +218,10 @@ async def submit_feedback_fn(
         target_id=target_id or "",
         user_id=user_id,
         feedback_type=feedback_type,
-        rating=rating,
         comment=comment or None,
         category=category or None,
         source="agent_tool",
+        agent_name=agent_name,
         metadata={},
         created_at="",
     )
@@ -544,12 +552,6 @@ BUILTIN_TOOL_METADATA: list[dict[str, Any]] = [
                     "type": "string",
                     "enum": ["praise", "blame"],
                     "description": "Feedback type",
-                },
-                "rating": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 5,
-                    "description": "Optional rating 1-5",
                 },
                 "comment": {
                     "type": "string",

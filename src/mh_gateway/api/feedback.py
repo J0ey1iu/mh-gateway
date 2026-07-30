@@ -25,7 +25,6 @@ class FeedbackCreateRequest(BaseModel):
     target_type: str = "message"  # "message" | "tool_call"
     target_id: str = ""
     feedback_type: str  # "thumbs_up" | "thumbs_down"
-    rating: int | None = None
     comment: str | None = None
     category: str | None = None
 
@@ -56,7 +55,6 @@ async def list_session_feedback(
             "target_id": fb.target_id,
             "feedback_type": fb.feedback_type,
             "comment": fb.comment,
-            "rating": fb.rating,
             "created_at": fb.created_at,
         }
         for fb in items
@@ -79,6 +77,7 @@ async def submit_feedback(
         raise HTTPException(404, "Session not found")
     if getattr(session, "user_id", None) != user_id:
         raise HTTPException(403, "Access denied")
+    agent_name = getattr(session, "agent_name", "") or ""
 
     feedback = Feedback(
         feedback_id=f"fb_{uuid4().hex[:12]}",
@@ -87,10 +86,10 @@ async def submit_feedback(
         target_id=body.target_id,
         user_id=user_id,
         feedback_type=body.feedback_type,
-        rating=body.rating,
         comment=body.comment,
         category=body.category,
         source="ui_button",
+        agent_name=agent_name,
         metadata={},
         created_at="",
     )

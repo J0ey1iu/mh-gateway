@@ -54,7 +54,6 @@ class TestSubmitFeedback:
                 "target_type": "tool_call",
                 "target_id": "tc-0",
                 "feedback_type": "thumbs_down",
-                "rating": 2,
                 "comment": "Not accurate enough",
                 "category": "accuracy",
             },
@@ -92,7 +91,7 @@ class TestSubmitFeedback:
         assert resp.status_code == 404
 
     def test_submit_feedback_with_comment(self, client_with_feedback, auth_header):
-        """Submit feedback with comment and rating."""
+        """Submit feedback with comment."""
         adapters = client_with_feedback.app.state.adapters
         adapters.sessions._sessions["sess-1"] = _FakeSession(
             session_id="sess-1", user_id="1"
@@ -106,7 +105,6 @@ class TestSubmitFeedback:
                 "target_type": "tool_call",
                 "target_id": "tc-0",
                 "feedback_type": "thumbs_up",
-                "rating": 5,
                 "comment": "准确 有用",
                 "category": "accuracy",
             },
@@ -115,7 +113,7 @@ class TestSubmitFeedback:
         data = resp.json()
         assert data["ok"] is True
 
-        # Verify via management list that comment and rating were stored
+        # Verify via management list that comment was stored
         resp = client_with_feedback.get(
             "/api/v1/management/feedback",
             headers=auth_header,
@@ -125,7 +123,6 @@ class TestSubmitFeedback:
         fb = next((fb for fb in items if fb["feedback_id"] == data["feedback_id"]), None)
         assert fb is not None
         assert fb["comment"] == "准确 有用"
-        assert fb["rating"] == 5
         assert fb["category"] == "accuracy"
 
     def test_submit_feedback_session_not_owned(self, client_with_feedback, auth_header):
