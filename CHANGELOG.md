@@ -1,5 +1,14 @@
 # Change Log
 
+## Unreleased
+
+- feat(controller): per-request `ChatRequest.controller` /
+  `controller_config` routed through to the runtime Controller layer
+  (default / goal / timer); `GET /api/v1/management/controllers` catalog
+  endpoint; goal / timer registered with config-backed defaults;
+  ControllerStart / Continue / End events serialised on the chat SSE
+  stream.
+
 ## 0.1.0a9
 
 - chore: bump `minimal-harness` pin from `==0.7.0a7` to `==0.7.0a8`
