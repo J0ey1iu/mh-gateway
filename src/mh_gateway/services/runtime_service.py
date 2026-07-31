@@ -12,7 +12,7 @@ from fastapi import Request
 from mh_service_kit.sse.tool_executor import SSEToolExecutor
 from minimal_harness.agent.middleware import Middleware
 from minimal_harness.agent.registry import AgentRegistry
-from minimal_harness.agent.runtime import AgentRuntime
+from minimal_harness.agent.runtime import AgentRuntime, ControllerRegistry
 from minimal_harness.llm.llm import LLMProvider
 from minimal_harness.tool.factory import DefaultToolFactory
 from minimal_harness.tool.registry import ToolRegistry
@@ -35,6 +35,7 @@ from mh_gateway.adapters import (
     match_permission,
 )
 from mh_gateway.api.locale import parse_locale_json
+from mh_gateway.config import ConfigSchema
 from mh_gateway.services.audit_middleware import AuditMiddleware
 from mh_gateway.services.database import get_session_store
 from mh_gateway.services.perm_middleware import PermissionMiddleware
@@ -132,7 +133,6 @@ def serialize_harness_event(event: Any) -> dict[str, Any]:
         return {
             "controller_type": event.controller_type,
             "next_prompt": event.next_prompt,
-            "meta": event.meta,
         }
     if isinstance(event, ControllerEnd):
         return {
@@ -644,27 +644,42 @@ async def create_runtime(
             prompt_token_threshold=8000,
             keep_recent=6,
         ),
-    )
-
-    # ── Controller 注册 ──
-    # "default" 不需要显式注册——ControllerRegistry.create() 回退到
-    # DefaultController。goal / timer 的默认参数来自 gateway config。
-    from minimal_harness.agent.controller import GoalController, TimerController
-
-    settings = getattr(adapters, "settings", None)
-    runtime.register_controller(
-        "goal",
-        lambda llm_provider: GoalController(
-            llm_provider=llm_provider,
-            max_goal_rounds=getattr(settings, "goal_max_rounds", 5),
-        ),
-    )
-    runtime.register_controller(
-        "timer",
-        lambda llm_provider: TimerController(
-            llm_provider=llm_provider,
-            default_duration=getattr(settings, "timer_default_duration", "30m"),
-        ),
+        controller_registry=build_controller_registry(adapters.settings),
     )
 
     return runtime, agent_registry, tool_registry, session_store
+
+
+def build_controller_registry(settings: ConfigSchema) -> ControllerRegistry:
+    """Build the controller registry — the single source of truth for
+    available controller types (consumed by ``/management/controllers``).
+
+    ``default`` is registered explicitly so it shows up in the catalog;
+    unknown types still fall back to ``DefaultController`` in
+    ``ControllerRegistry.create``. Per-request ``controller_config``
+    overrides remain, but the *default* parameters come only from
+    gateway config.
+    """
+    from minimal_harness.agent.controller import (
+        DefaultController,
+        GoalController,
+        TimerController,
+    )
+
+    reg = ControllerRegistry()
+    reg.register("default", lambda llm_provider: DefaultController())
+    reg.register(
+        "goal",
+        lambda llm_provider: GoalController(
+            llm_provider=llm_provider,
+            max_goal_rounds=settings.goal_max_rounds,
+        ),
+    )
+    reg.register(
+        "timer",
+        lambda llm_provider: TimerController(
+            llm_provider=llm_provider,
+            default_duration=settings.timer_default_duration,
+        ),
+    )
+    return reg

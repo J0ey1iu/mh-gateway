@@ -13,6 +13,7 @@ from mh_gateway.adapters import Feedback
 
 from mh_gateway.api.dependencies import require_permission
 from mh_gateway.llm import LLMProviderConfig
+from mh_gateway.services.runtime_service import build_controller_registry
 from minimal_harness.agent.factory import get_builtin_agent_type_schemas
 from minimal_harness.tool.script_parser import parse_tool_script
 
@@ -515,20 +516,20 @@ async def list_agent_types(
 async def list_controllers(
     request: Request,
 ) -> list[dict[str, Any]]:
-    """ChatRequest.controller 可选的 Controller 目录（静态元数据，无需权限）。
+    """ChatRequest.controller 可选的 Controller 目录（无需权限）。
 
-    由聊天输入框下拉菜单消费。default 是 registry 的隐式回退，
-    goal / timer 由 create_runtime 注册，默认参数来自 gateway config。
+    类型列表来自 controller registry（``build_controller_registry``），
+    展示/参数元数据为每类型的静态 UI 定义；默认参数来自 gateway config。
     """
-    settings = getattr(request.app.state.adapters, "settings", None)
-    return [
-        {
+    settings = request.app.state.adapters.settings
+    catalog = {
+        "default": {
             "value": "default",
             "display_name": "Standard",
             "display_name_zh": "标准模式",
             "description": "Agent 跑完就停，单轮回答。",
         },
-        {
+        "goal": {
             "value": "goal",
             "display_name": "Goal",
             "display_name_zh": "目标模式",
@@ -537,11 +538,11 @@ async def list_controllers(
                 {
                     "key": "max_goal_rounds",
                     "type": "number",
-                    "default": getattr(settings, "goal_max_rounds", 5),
+                    "default": settings.goal_max_rounds,
                 }
             ],
         },
-        {
+        "timer": {
             "value": "timer",
             "display_name": "Timer",
             "display_name_zh": "计时模式",
@@ -550,12 +551,13 @@ async def list_controllers(
                 {
                     "key": "duration",
                     "type": "string",
-                    "default": getattr(settings, "timer_default_duration", "30m"),
+                    "default": settings.timer_default_duration,
                     "placeholder": "e.g. 30m, 1h, 300s",
                 }
             ],
         },
-    ]
+    }
+    return [catalog[t] for t in build_controller_registry(settings).list_types()]
 
 
 @router.get("/providers")

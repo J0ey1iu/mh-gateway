@@ -213,12 +213,10 @@ def test_controller_events_flat() -> None:
         ControllerContinue(
             controller_type="timer",
             next_prompt="keep going",
-            meta={"elapsed": 3, "remaining": 27, "duration": 30},
         )
     )
-    assert set(cont.keys()) == {"controller_type", "next_prompt", "meta"}
+    assert set(cont.keys()) == {"controller_type", "next_prompt"}
     assert cont["next_prompt"] == "keep going"
-    assert cont["meta"]["remaining"] == 27
 
     end = serialize_harness_event(
         ControllerEnd(
