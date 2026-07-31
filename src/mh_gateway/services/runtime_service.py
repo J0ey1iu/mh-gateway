@@ -309,7 +309,9 @@ def _resolve_compaction_settings(agent_dict: dict) -> CompactionSettings | None:
     return result if result else None
 
 
-def _resolve_tool_compaction_settings(agent_dict: dict) -> ToolCompactionSettings | None:
+def _resolve_tool_compaction_settings(
+    agent_dict: dict,
+) -> ToolCompactionSettings | None:
     raw = agent_dict.get("tool_compaction")
     if not raw or not isinstance(raw, dict):
         return None
@@ -575,6 +577,25 @@ async def create_runtime(
             trace_id=trace_id,
         ),
     ]
+    # Optional metrics persistence — only when a repository is registered
+    # (injected by the deployment via lifespan hooks).  Kept as a separate
+    # middleware so audit logging and metrics collection stay decoupled.
+    from mh_gateway.metrics_repo import get_metrics_repo
+    from mh_gateway.services.metrics_middleware import (
+        MetricsPersistenceMiddleware,
+    )
+
+    if get_metrics_repo() is not None:
+        middleware.append(
+            MetricsPersistenceMiddleware(
+                user_id=user_id,
+                session_id=session_id,
+                agent_id=agent_name,
+                scenario_id=scenario_id,
+                provider=resolved_provider,
+                model=resolved_model,
+            )
+        )
     if extra_middleware:
         middleware.extend(extra_middleware)
 

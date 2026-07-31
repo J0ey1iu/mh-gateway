@@ -149,6 +149,7 @@ agents = await adapters.management_provider.list_agents()
 | `/api/v1/management/tools/upload` | POST | 上传单个 `.py` 工具脚本（multipart `file`），自动解析 `TOOL_NAME` / `TOOL_PARAMETERS` / locale 元数据并校验 shebang 解释器存在性 |
 | `/api/v1/management/tools/upload-batch` | POST | 批量上传多个 `.py` 工具脚本，单文件错误不影响其他文件 |
 | `/api/v1/management/providers` | GET | LLM Provider 列表 |
+| `/api/v1/management/metrics` | GET | 数据概览聚合指标（需 `manage:metrics:*` 权限，支持 `?date_from=&date_to=` 日期区间，精确到日） |
 
 ### M2M 端点
 
@@ -219,6 +220,31 @@ async def execute(name: str):
 | `sessions_active` | Gauge | — |
 
 指标通过 AuditMiddleware 的生命周期钩子自动采集。可通过 `/api/v1/metrics` 获取实时快照。
+
+## 指标持久化（MetricsRepository）
+
+管理面数据概览（`/api/v1/management/metrics`）基于 **可选** 的持久化指标仓库，采用与
+`MetricsCollector` 相同的单例注入模式，**不修改 `GatewayAdapters`**：
+
+```python
+from mh_gateway.metrics_repo import MetricsRepository, LLMCallRecord, set_metrics_repo
+
+class MyMetricsRepository(MetricsRepository):
+    async def record_llm_call(self, record: LLMCallRecord) -> None: ...
+    async def record_tool_call(self, record: ToolCallRecord) -> None: ...
+    async def query_summary(self, date_from=None, date_to=None) -> MetricsSummary: ...
+    async def close(self) -> None: ...
+
+# 部署方在 lifespan hook 中注册（create_app 已支持 lifespan_hooks 参数）
+set_metrics_repo(MyMetricsRepository())
+```
+
+- 记录写入：由独立的 `MetricsPersistenceMiddleware`（单一职责，区别于审计）在
+  `on_llm_end` / `on_tool_end` 钩子中写入，每条 LLM 调用记录一次（含 user/session/agent/scenario/provider/model/token/耗时）。
+- 查询聚合：`query_summary` 按日期区间（`YYYY-MM-DD`）聚合调用次数、Token、Top N、模型性能。
+- 存储介质：协议对后端完全中立 —— 单实例可用 SQLite/JSONL 文件，水平扩展时部署方可换共享数据库实现。
+- 权限：端点需要 `manage:metrics:*` 权限（`require_permission`）。
+- 未注册仓库时端点返回 `503`；中间件在未注册时完全静默。
 
 ## PermissionMiddleware
 

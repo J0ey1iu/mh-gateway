@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator, Sequence
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
@@ -249,11 +249,13 @@ def create_app(
                 )
             app.state.adapters = bundle
 
-            for hook in lifespan_hooks or []:
-                async with hook(app):
-                    pass
+            # Hold lifespan hooks open for the whole app lifetime so their
+            # teardown runs at shutdown (not immediately after startup).
+            async with AsyncExitStack() as hook_stack:
+                for hook in lifespan_hooks or []:
+                    await hook_stack.enter_async_context(hook(app))
 
-            yield
+                yield
 
         if settings.metrics_enabled:
             from mh_gateway.monitoring.collector import (

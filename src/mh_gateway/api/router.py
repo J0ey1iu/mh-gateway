@@ -6,6 +6,7 @@ from mh_gateway.api.chat import router as chat_router
 from mh_gateway.api.feedback import router as feedback_router
 from mh_gateway.api.guide import router as guide_router
 from mh_gateway.api.management import router as management_router
+from mh_gateway.api.metrics_management import router as metrics_management_router
 from mh_gateway.api.runtime_tools import router as runtime_tools_router
 from mh_gateway.api.scenarios import router as scenarios_router
 from mh_gateway.api.sessions import router as sessions_router
@@ -24,5 +25,6 @@ router.include_router(tools_router)
 router.include_router(runtime_tools_router)
 router.include_router(feedback_router)
 router.include_router(management_router)
+router.include_router(metrics_management_router)
 router.include_router(health_router)
 router.include_router(metrics_router)
