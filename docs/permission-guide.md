@@ -42,6 +42,7 @@ action:resource:target
 | `manage:scene:*` | `API /management/scenes/*` 所有端点 | `require_permission()` → 403 |
 | `manage:agent:*` | `API /management/agents/*` 所有端点 | `require_permission()` → 403 |
 | `manage:tool:*` | `API /management/tools/*` 所有端点 | `require_permission()` → 403 |
+| `manage:metrics:*` | `API /management/metrics`（数据概览聚合指标） | `require_permission()` → 403 |
 
 ---
 
