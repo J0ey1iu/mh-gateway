@@ -7,6 +7,9 @@ import os
 import shutil
 import sys
 from typing import Any, AsyncIterator
+from uuid import uuid4
+
+from mh_gateway.context import get_current_request, get_current_user_id
 
 _IS_WINDOWS = sys.platform == "win32" or sys.platform == "cygwin"
 _PLATFORM_NAME = "Windows" if _IS_WINDOWS else "macOS/Linux"
@@ -160,6 +163,74 @@ async def bash_fn(
             "message": f"Failed to execute command: {e}. Check that the command syntax is correct for {_SHELL_NAME}.",
             "suggestion": "Verify command syntax for the current platform",
         }
+
+
+async def submit_feedback_fn(
+    type: str = "",
+    comment: str = "",
+    category: str = "",
+    target_type: str = "",
+    target_id: str = "",
+) -> AsyncIterator[Any]:
+    if not type:
+        yield {"status": "error", "message": "type is required (praise/blame)"}
+        return
+
+    request = get_current_request()
+    if request is None:
+        yield {"status": "error", "message": "No active request context"}
+        return
+
+    user_id = get_current_user_id()
+    if not user_id:
+        yield {"status": "error", "message": "No authenticated user"}
+        return
+
+    # Extract session_id from request path — chat endpoint uses {memory_id}
+    path_params = request.scope.get("path_params", {})
+    session_id = path_params.get("memory_id", "")
+    if not session_id:
+        yield {"status": "error", "message": "Could not determine session_id"}
+        return
+
+    adapters = request.app.state.adapters
+    if adapters.feedback is None:
+        yield {"status": "error", "message": "Feedback storage not configured"}
+        return
+
+    feedback_type = "thumbs_up" if type == "praise" else "thumbs_down"
+
+    from mh_gateway.adapters import Feedback
+
+    # resolve agent_name from the session
+    agent_name = ""
+    try:
+        session = await adapters.sessions.get_session(session_id)
+        if session:
+            agent_name = getattr(session, "agent_name", "") or ""
+    except Exception:
+        pass
+
+    feedback = Feedback(
+        feedback_id=f"fb_{uuid4().hex[:12]}",
+        session_id=session_id,
+        target_type=target_type or "message",
+        target_id=target_id or "",
+        user_id=user_id,
+        feedback_type=feedback_type,
+        comment=comment or None,
+        category=category or None,
+        source="agent_tool",
+        agent_name=agent_name,
+        metadata={},
+        created_at="",
+    )
+    saved = await adapters.feedback.save(feedback)
+    yield {
+        "status": "ok",
+        "message": f"Feedback {saved.feedback_id} recorded",
+        "feedback_id": saved.feedback_id,
+    }
 
 
 async def local_file_operator_fn(
@@ -455,6 +526,55 @@ async def local_file_operator_fn(
 
 
 BUILTIN_TOOL_METADATA: list[dict[str, Any]] = [
+    {
+        "name": "submit_feedback",
+        "display_name": "Submit Feedback",
+        "display_name_locale": json.dumps(
+            {"zh": "提交反馈", "en": "Submit Feedback"},
+            ensure_ascii=False,
+        ),
+        "description": (
+            "Collect user praise or criticism from the conversation. "
+            "Only call when the user explicitly expresses strong satisfaction "
+            "or dissatisfaction in natural language."
+        ),
+        "description_locale": json.dumps(
+            {
+                "zh": "从对话中收集用户的表扬或批评意见。仅在用户用自然语言明确表达了强烈不满或大力赞扬时调用。",
+                "en": "Collect user praise or criticism from the conversation. Only call when the user explicitly expresses strong satisfaction or dissatisfaction in natural language.",
+            },
+            ensure_ascii=False,
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "enum": ["praise", "blame"],
+                    "description": "Feedback type",
+                },
+                "comment": {
+                    "type": "string",
+                    "description": "User's exact comment or summary",
+                },
+                "category": {
+                    "type": "string",
+                    "description": "Category tag e.g. clarity, accuracy, speed",
+                },
+                "target_type": {
+                    "type": "string",
+                    "enum": ["message", "tool_call"],
+                    "description": "Target entity type",
+                },
+                "target_id": {
+                    "type": "string",
+                    "description": "Target entity ID",
+                },
+            },
+            "required": ["type"],
+        },
+        "_fn": submit_feedback_fn,
+    },
     {
         "name": "bash",
         "display_name": "Bash",

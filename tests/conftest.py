@@ -50,6 +50,7 @@ ALL_PERMS = [
     "manage:scene:*",
     "manage:agent:*",
     "manage:tool:*",
+    "manage:feedback:*",
 ]
 
 
@@ -261,11 +262,14 @@ class _MockLLM:
 
 
 class _MockSessionRepo:
+    def __init__(self):
+        self._sessions: dict = {}
+
     async def create_session(self, **kwargs):
         return None
 
     async def get_session(self, session_id):
-        return None
+        return self._sessions.get(session_id)
 
     async def save_memory(self, memory, session_id, extra=None):
         return None
@@ -293,6 +297,77 @@ class _MockSessionRepo:
 
     async def close(self):
         return None
+
+
+class _MockFeedbackRepo:
+    """In-memory feedback store for tests."""
+
+    def __init__(self):
+        self._items: dict = {}
+
+    async def save(self, feedback):
+        self._items[feedback.feedback_id] = feedback
+        return feedback
+
+    async def get(self, feedback_id):
+        return self._items.get(feedback_id)
+
+    async def delete(self, feedback_id):
+        if feedback_id in self._items:
+            del self._items[feedback_id]
+            return True
+        return False
+
+    async def delete_many(self, feedback_ids):
+        count = 0
+        for fid in feedback_ids:
+            if fid in self._items:
+                del self._items[fid]
+                count += 1
+        return count
+
+    async def update_status(self, feedback_id, status):
+        fb = self._items.get(feedback_id)
+        if fb is None:
+            return None
+        from dataclasses import replace
+        fb = replace(fb, status=status)
+        self._items[feedback_id] = fb
+        return fb
+
+    async def list(
+        self,
+        *,
+        page=1,
+        page_size=20,
+        q=None,
+        feedback_type=None,
+        source=None,
+        status=None,
+        date_from=None,
+        date_to=None,
+    ):
+        items = list(self._items.values())
+        if q:
+            q_lower = q.lower()
+            items = [
+                fb
+                for fb in items
+                if fb.user_id and q_lower in fb.user_id.lower()
+            ]
+        if feedback_type:
+            items = [fb for fb in items if fb.feedback_type == feedback_type]
+        if source:
+            items = [fb for fb in items if fb.source == source]
+        if status:
+            items = [fb for fb in items if fb.status == status]
+        total = len(items)
+        start = (page - 1) * page_size
+        end = start + page_size
+        return items[start:end], total
+
+    async def close(self):
+        pass
 
 
 @pytest.fixture
@@ -344,3 +419,41 @@ def client(test_app) -> Generator[TestClient, None, None]:
 @pytest.fixture
 def auth_header() -> dict[str, str]:
     return {"X-User-Id": "1"}
+
+
+@pytest.fixture
+def test_app_with_feedback(tmp_path, mock_metadata, mock_provider):
+    """Test app with feedback store enabled."""
+    settings = ConfigSchema(
+        db_path=str(tmp_path / "test.db"),
+        cors_origins=[],
+        metrics_enabled=False,
+        enable_eval=False,
+    )
+
+    @asynccontextmanager
+    async def adapter_lifespan(app: FastAPI):
+        bundle = GatewayAdapters(
+            settings=settings,
+            user_auth=mock_provider,
+            authorization=mock_provider,
+            m2m_auth=mock_provider,
+            outbound_auth=mock_provider,
+            metadata=mock_metadata,
+            llm=_MockLLM(),
+            sessions=_MockSessionRepo(),
+            eval_results=None,
+            feedback=_MockFeedbackRepo(),
+        )
+        yield bundle
+
+    return create_app(
+        settings=settings,
+        adapters=adapter_lifespan,
+    )
+
+
+@pytest.fixture
+def client_with_feedback(test_app_with_feedback) -> Generator[TestClient, None, None]:
+    with TestClient(test_app_with_feedback, raise_server_exceptions=False) as c:
+        yield c

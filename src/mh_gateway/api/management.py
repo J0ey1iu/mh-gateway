@@ -6,7 +6,10 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
+
+from mh_gateway.adapters import Feedback
 
 from mh_gateway.api.dependencies import require_permission
 from mh_gateway.llm import LLMProviderConfig
@@ -1010,3 +1013,240 @@ async def upload_tool_scripts_batch(
             )
 
     return UploadToolsResponse(created=created, errors=errors)
+
+
+# ── Feedback Management ──
+
+
+class FeedbackResponse(BaseModel):
+    feedback_id: str
+    session_id: str
+    target_type: str
+    target_id: str
+    user_id: str
+    feedback_type: str
+    comment: str | None
+    category: str | None
+    source: str
+    agent_name: str
+    metadata: dict[str, Any]
+    created_at: str
+
+
+@router.get("/feedback", response_model=ListResponse)
+async def list_feedback(
+    request: Request,
+    q: str | None = Query(None, description="Search by user ID"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+    feedback_type: str | None = Query(
+        None, description="Filter by type: thumbs_up / thumbs_down"
+    ),
+    source: str | None = Query(
+        None, description="Filter by source: ui_button / agent_tool"
+    ),
+    date_from: str | None = Query(None, description="Start date (ISO)"),
+    date_to: str | None = Query(None, description="End date (ISO)"),
+    status: str | None = Query(
+        None, description="Filter by status: new / analyzing / optimized / deployed"
+    ),
+    user_id: str = Depends(require_permission("manage:feedback:*")),
+) -> ListResponse:
+    adapters = request.app.state.adapters
+    if adapters.feedback is None:
+        return ListResponse(items=[], total=0, page=page, page_size=page_size)
+    items, total = await adapters.feedback.list(
+        page=page,
+        page_size=page_size,
+        q=q,
+        feedback_type=feedback_type,
+        source=source,
+        status=status,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    return ListResponse(
+        items=[_feedback_to_dict(fb) for fb in items],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get("/feedback/{feedback_id}/session")
+async def get_feedback_session(
+    request: Request,
+    feedback_id: str,
+    user_id: str = Depends(require_permission("manage:feedback:*")),
+) -> dict[str, Any]:
+    adapters = request.app.state.adapters
+    if adapters.feedback is None:
+        raise HTTPException(501, "Feedback storage not configured")
+
+    fb = await adapters.feedback.get(feedback_id)
+    if fb is None:
+        raise HTTPException(404, "Feedback not found")
+
+    # get session info
+    session = await adapters.sessions.get_session(fb.session_id)
+    session_dict = {
+        "session_id": fb.session_id,
+        "user_id": fb.user_id,
+        "agent_name": fb.agent_name,
+    }
+    if session:
+        session_dict["title"] = getattr(session, "title", "")
+        session_dict["created_at"] = getattr(session, "created_at", "")
+
+    # get messages (enriched items) so IDs match frontend convention
+    messages = list(adapters.sessions.get_messages_as_items(session))
+
+    # find which message matches the feedback target
+    highlight_message_id = None
+    for m in messages:
+        if fb.target_type == "message" and fb.target_id:
+            if m.get("id") == fb.target_id:
+                highlight_message_id = m.get("id")
+                break
+        elif fb.target_type == "tool_call" and fb.target_id:
+            # highlight the tool RESULT message (role="tool"), not the
+            # assistant message that initiated the call
+            if m.get("role") == "tool" and m.get("tool_call_id") == fb.target_id:
+                highlight_message_id = m.get("id")
+                break
+
+    return {
+        "session": session_dict,
+        "messages": messages,
+        "highlight_target_type": fb.target_type,
+        "highlight_target_id": fb.target_id,
+        "highlight_message_id": highlight_message_id or fb.target_id,
+        "feedback": _feedback_to_dict(fb),
+    }
+
+
+def _feedback_to_dict(fb: Feedback) -> dict[str, Any]:
+    return {
+        "feedback_id": fb.feedback_id,
+        "session_id": fb.session_id,
+        "target_type": fb.target_type,
+        "target_id": fb.target_id,
+        "user_id": fb.user_id,
+        "feedback_type": fb.feedback_type,
+        "comment": fb.comment,
+        "category": fb.category,
+        "source": fb.source,
+        "status": fb.status,
+        "agent_name": fb.agent_name,
+        "metadata": fb.metadata,
+        "created_at": fb.created_at,
+    }
+
+
+class BatchDeleteRequest(BaseModel):
+    ids: list[str]
+
+
+class StatusUpdateRequest(BaseModel):
+    status: str
+
+
+@router.delete("/feedback/{feedback_id}")
+async def delete_feedback(
+    request: Request,
+    feedback_id: str,
+    user_id: str = Depends(require_permission("manage:feedback:*")),
+) -> dict[str, str]:
+    adapters = request.app.state.adapters
+    if adapters.feedback is None:
+        raise HTTPException(501, "Feedback storage not configured")
+    deleted = await adapters.feedback.delete(feedback_id)
+    if not deleted:
+        raise HTTPException(404, "Feedback not found")
+    logger.info("Feedback deleted id=%s by user=%s", feedback_id, user_id)
+    return {"status": "deleted", "feedback_id": feedback_id}
+
+
+@router.post("/feedback/batch-delete")
+async def batch_delete_feedback(
+    request: Request,
+    body: BatchDeleteRequest,
+    user_id: str = Depends(require_permission("manage:feedback:*")),
+) -> dict[str, int]:
+    adapters = request.app.state.adapters
+    if adapters.feedback is None:
+        raise HTTPException(501, "Feedback storage not configured")
+    count = await adapters.feedback.delete_many(body.ids)
+    logger.info(
+        "Feedback batch-deleted %d items by user=%s", count, user_id
+    )
+    return {"deleted": count}
+
+
+@router.patch("/feedback/{feedback_id}/status")
+async def update_feedback_status(
+    request: Request,
+    feedback_id: str,
+    body: StatusUpdateRequest,
+    user_id: str = Depends(require_permission("manage:feedback:*")),
+) -> dict[str, Any]:
+    adapters = request.app.state.adapters
+    if adapters.feedback is None:
+        raise HTTPException(501, "Feedback storage not configured")
+    fb = await adapters.feedback.update_status(feedback_id, body.status)
+    if fb is None:
+        raise HTTPException(404, "Feedback not found")
+    logger.info(
+        "Feedback status updated id=%s status=%s by user=%s",
+        feedback_id, body.status, user_id,
+    )
+    return _feedback_to_dict(fb)
+
+
+@router.get("/feedback/export")
+async def export_feedback(
+    request: Request,
+    q: str | None = Query(None, description="Search query"),
+    feedback_type: str | None = Query(
+        None, description="Filter by type: thumbs_up / thumbs_down"
+    ),
+    source: str | None = Query(
+        None, description="Filter by source: ui_button / agent_tool"
+    ),
+    status: str | None = Query(
+        None, description="Filter by status: new / analyzing / optimized / deployed"
+    ),
+    date_from: str | None = Query(None, description="Start date (ISO)"),
+    date_to: str | None = Query(None, description="End date (ISO)"),
+    user_id: str = Depends(require_permission("manage:feedback:*")),
+) -> Response:
+    adapters = request.app.state.adapters
+    if adapters.feedback is None:
+        return Response(
+            content="feedback_id,session_id,user_id,feedback_type,source,status,comment,created_at\n",
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=feedback.csv"},
+        )
+    items, _ = await adapters.feedback.list(
+        page=1,
+        page_size=999999,
+        q=q,
+        feedback_type=feedback_type,
+        source=source,
+        status=status,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    lines = ["feedback_id,session_id,user_id,agent_name,feedback_type,source,status,comment,created_at"]
+    for fb in items:
+        comment = (fb.comment or "").replace('"', '""')
+        lines.append(
+            f'{fb.feedback_id},{fb.session_id},{fb.user_id},{fb.agent_name},'
+            f'{fb.feedback_type},{fb.source},{fb.status},'
+            f'"{comment}",{fb.created_at}'
+        )
+    return Response(
+        content="\n".join(lines),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=feedback.csv"},
+    )
