@@ -664,7 +664,6 @@ async def create_runtime(
         lambda llm_provider: TimerController(
             llm_provider=llm_provider,
             default_duration=getattr(settings, "timer_default_duration", "30m"),
-            max_rounds=getattr(settings, "timer_max_rounds", 100),
         ),
     )
 

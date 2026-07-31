@@ -38,7 +38,6 @@ class ConfigSchema(BaseModel):
     # 默认参数；per-request 的 controller_config 优先。
     goal_max_rounds: int = 5
     timer_default_duration: str = "30m"
-    timer_max_rounds: int = 100
 
     @property
     def database_url(self) -> str:
