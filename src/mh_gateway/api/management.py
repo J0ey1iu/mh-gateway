@@ -514,11 +514,10 @@ async def list_agent_types(
 @router.get("/controllers")
 async def list_controllers(
     request: Request,
-    user_id: str = Depends(require_permission("manage:agent:*")),
 ) -> list[dict[str, Any]]:
-    """ChatRequest.controller 可选的 Controller 目录。
+    """ChatRequest.controller 可选的 Controller 目录（静态元数据，无需权限）。
 
-    由 chat 输入框下拉菜单消费。default 是 registry 的隐式回退，
+    由聊天输入框下拉菜单消费。default 是 registry 的隐式回退，
     goal / timer 由 create_runtime 注册，默认参数来自 gateway config。
     """
     settings = getattr(request.app.state.adapters, "settings", None)
