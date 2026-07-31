@@ -15,6 +15,9 @@ from minimal_harness.types import (
     CompactionChunk,
     CompactionEnd,
     CompactionStart,
+    ControllerContinue,
+    ControllerEnd,
+    ControllerStart,
     ExecutionEnd,
     ExecutionStart,
     LLMChunk,
@@ -197,6 +200,45 @@ def test_compaction_events_flat() -> None:
         "duration",
         "error",
     }
+
+
+def test_controller_events_flat() -> None:
+    start = serialize_harness_event(
+        ControllerStart(controller_type="goal", user_input="hi")
+    )
+    assert set(start.keys()) == {"controller_type", "user_input"}
+    assert start["controller_type"] == "goal"
+
+    cont = serialize_harness_event(
+        ControllerContinue(
+            controller_type="timer",
+            next_prompt="keep going",
+            meta={"elapsed": 3, "remaining": 27, "duration": 30},
+        )
+    )
+    assert set(cont.keys()) == {"controller_type", "next_prompt", "meta"}
+    assert cont["next_prompt"] == "keep going"
+    assert cont["meta"]["remaining"] == 27
+
+    end = serialize_harness_event(
+        ControllerEnd(
+            controller_type="goal",
+            response="r",
+            time_taken=1.0,
+            exceeded=True,
+            interrupted=False,
+            error=None,
+        )
+    )
+    assert set(end.keys()) == {
+        "controller_type",
+        "response",
+        "time_taken",
+        "exceeded",
+        "interrupted",
+        "error",
+    }
+    assert end["exceeded"] is True
 
 
 def test_no_type_discriminator_in_payload() -> None:

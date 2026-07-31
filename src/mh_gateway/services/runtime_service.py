@@ -83,6 +83,9 @@ def serialize_harness_event(event: Any) -> dict[str, Any]:
         CompactionChunk,
         CompactionEnd,
         CompactionStart,
+        ControllerContinue,
+        ControllerEnd,
+        ControllerStart,
         ExecutionEnd,
         ExecutionStart,
         LLMChunk,
@@ -114,6 +117,26 @@ def serialize_harness_event(event: Any) -> dict[str, Any]:
         return {}
     if isinstance(event, AgentEnd):
         return {
+            "response": event.response,
+            "time_taken": event.time_taken,
+            "exceeded": event.exceeded,
+            "interrupted": event.interrupted,
+            "error": event.error,
+        }
+    if isinstance(event, ControllerStart):
+        return {
+            "controller_type": event.controller_type,
+            "user_input": event.user_input,
+        }
+    if isinstance(event, ControllerContinue):
+        return {
+            "controller_type": event.controller_type,
+            "next_prompt": event.next_prompt,
+            "meta": event.meta,
+        }
+    if isinstance(event, ControllerEnd):
+        return {
+            "controller_type": event.controller_type,
             "response": event.response,
             "time_taken": event.time_taken,
             "exceeded": event.exceeded,
@@ -620,6 +643,28 @@ async def create_runtime(
         default_compaction_settings=CompactionSettings(
             prompt_token_threshold=8000,
             keep_recent=6,
+        ),
+    )
+
+    # ── Controller 注册 ──
+    # "default" 不需要显式注册——ControllerRegistry.create() 回退到
+    # DefaultController。goal / timer 的默认参数来自 gateway config。
+    from minimal_harness.agent.controller import GoalController, TimerController
+
+    settings = getattr(adapters, "settings", None)
+    runtime.register_controller(
+        "goal",
+        lambda llm_provider: GoalController(
+            llm_provider=llm_provider,
+            max_goal_rounds=getattr(settings, "goal_max_rounds", 5),
+        ),
+    )
+    runtime.register_controller(
+        "timer",
+        lambda llm_provider: TimerController(
+            llm_provider=llm_provider,
+            default_duration=getattr(settings, "timer_default_duration", "30m"),
+            max_rounds=getattr(settings, "timer_max_rounds", 100),
         ),
     )
 

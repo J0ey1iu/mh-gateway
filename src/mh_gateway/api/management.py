@@ -508,6 +508,57 @@ async def list_agent_types(
     return get_builtin_agent_type_schemas()
 
 
+# ── Controllers ────────────────────────────────────────────────────────────
+
+
+@router.get("/controllers")
+async def list_controllers(
+    request: Request,
+    user_id: str = Depends(require_permission("manage:agent:*")),
+) -> list[dict[str, Any]]:
+    """ChatRequest.controller 可选的 Controller 目录。
+
+    由 chat 输入框下拉菜单消费。default 是 registry 的隐式回退，
+    goal / timer 由 create_runtime 注册，默认参数来自 gateway config。
+    """
+    settings = getattr(request.app.state.adapters, "settings", None)
+    return [
+        {
+            "value": "default",
+            "display_name": "Standard",
+            "display_name_zh": "标准模式",
+            "description": "Agent 跑完就停，单轮回答。",
+        },
+        {
+            "value": "goal",
+            "display_name": "Goal",
+            "display_name_zh": "目标模式",
+            "description": "judge LLM 判断目标是否完成，未完成则自动继续。",
+            "settings": [
+                {
+                    "key": "max_goal_rounds",
+                    "type": "number",
+                    "default": getattr(settings, "goal_max_rounds", 5),
+                }
+            ],
+        },
+        {
+            "value": "timer",
+            "display_name": "Timer",
+            "display_name_zh": "计时模式",
+            "description": "在指定时长内持续工作，时间到自动停止。",
+            "settings": [
+                {
+                    "key": "duration",
+                    "type": "string",
+                    "default": getattr(settings, "timer_default_duration", "30m"),
+                    "placeholder": "e.g. 30m, 1h, 300s",
+                }
+            ],
+        },
+    ]
+
+
 @router.get("/providers")
 async def list_providers(
     request: Request,
@@ -1177,9 +1228,7 @@ async def batch_delete_feedback(
     if adapters.feedback is None:
         raise HTTPException(501, "Feedback storage not configured")
     count = await adapters.feedback.delete_many(body.ids)
-    logger.info(
-        "Feedback batch-deleted %d items by user=%s", count, user_id
-    )
+    logger.info("Feedback batch-deleted %d items by user=%s", count, user_id)
     return {"deleted": count}
 
 
@@ -1198,7 +1247,9 @@ async def update_feedback_status(
         raise HTTPException(404, "Feedback not found")
     logger.info(
         "Feedback status updated id=%s status=%s by user=%s",
-        feedback_id, body.status, user_id,
+        feedback_id,
+        body.status,
+        user_id,
     )
     return _feedback_to_dict(fb)
 
@@ -1237,12 +1288,14 @@ async def export_feedback(
         date_from=date_from,
         date_to=date_to,
     )
-    lines = ["feedback_id,session_id,user_id,agent_name,feedback_type,source,status,comment,created_at"]
+    lines = [
+        "feedback_id,session_id,user_id,agent_name,feedback_type,source,status,comment,created_at"
+    ]
     for fb in items:
         comment = (fb.comment or "").replace('"', '""')
         lines.append(
-            f'{fb.feedback_id},{fb.session_id},{fb.user_id},{fb.agent_name},'
-            f'{fb.feedback_type},{fb.source},{fb.status},'
+            f"{fb.feedback_id},{fb.session_id},{fb.user_id},{fb.agent_name},"
+            f"{fb.feedback_type},{fb.source},{fb.status},"
             f'"{comment}",{fb.created_at}'
         )
     return Response(
