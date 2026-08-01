@@ -660,11 +660,8 @@ def build_controller_registry(settings: ConfigSchema) -> ControllerRegistry:
     function. Per-request ``controller_config`` overrides remain, but the
     *default* parameters come only from gateway config.
     """
-    from minimal_harness.agent.controller import (
-        DefaultController,
-        GoalController,
-        TimerController,
-    )
+    from minimal_harness.agent.controller import DefaultController
+    from mh_gateway.services.controllers import GoalController, TimerController
 
     reg = ControllerRegistry()
     reg.register(

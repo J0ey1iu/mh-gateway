@@ -21,6 +21,9 @@ where = ["src"]
 [tool.setuptools.package-data]
 mh_gateway = ["py.typed"]
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
 [tool.uv.sources]
 minimal-harness = { workspace = true }
 mh-service-kit = { workspace = true }
