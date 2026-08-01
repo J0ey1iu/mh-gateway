@@ -1,5 +1,12 @@
 # Change Log
 
+## 0.1.1a4
+
+- feat(controllers): goal/timer 第 2 轮起的系统自动 prompt 通过
+  `Agent.run(user_message_meta={"source": "auto"})` 打标记持久化；
+  message API 项带 `auto: true`，前端据此与真实用户输入区分渲染。
+  需要 minimal-harness>=0.8.0a2。
+
 ## 0.1.1a3
 
 - refactor(controller): `GoalController` / `TimerController` now live in
