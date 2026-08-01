@@ -518,46 +518,11 @@ async def list_controllers(
 ) -> list[dict[str, Any]]:
     """ChatRequest.controller 可选的 Controller 目录（无需权限）。
 
-    类型列表来自 controller registry（``build_controller_registry``），
-    展示/参数元数据为每类型的静态 UI 定义；默认参数来自 gateway config。
+    类型列表与展示元数据来自 controller registry 的 ``catalog()``
+    （``build_controller_registry`` 注册时一并登记，单一来源）。
     """
     settings = request.app.state.adapters.settings
-    catalog = {
-        "default": {
-            "value": "default",
-            "display_name": "Standard",
-            "display_name_zh": "标准模式",
-            "description": "Agent 跑完就停，单轮回答。",
-        },
-        "goal": {
-            "value": "goal",
-            "display_name": "Goal",
-            "display_name_zh": "目标模式",
-            "description": "judge LLM 判断目标是否完成，未完成则自动继续。",
-            "settings": [
-                {
-                    "key": "max_goal_rounds",
-                    "type": "number",
-                    "default": settings.goal_max_rounds,
-                }
-            ],
-        },
-        "timer": {
-            "value": "timer",
-            "display_name": "Timer",
-            "display_name_zh": "计时模式",
-            "description": "在指定时长内持续工作，时间到自动停止。",
-            "settings": [
-                {
-                    "key": "duration",
-                    "type": "string",
-                    "default": settings.timer_default_duration,
-                    "placeholder": "e.g. 30m, 1h, 300s",
-                }
-            ],
-        },
-    }
-    return [catalog[t] for t in build_controller_registry(settings).list_types()]
+    return build_controller_registry(settings).catalog()
 
 
 @router.get("/providers")

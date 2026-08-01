@@ -652,13 +652,13 @@ async def create_runtime(
 
 def build_controller_registry(settings: ConfigSchema) -> ControllerRegistry:
     """Build the controller registry — the single source of truth for
-    available controller types (consumed by ``/management/controllers``).
+    available controller types (consumed by ``/management/controllers`` via
+    ``ControllerRegistry.catalog``).
 
-    ``default`` is registered explicitly so it shows up in the catalog;
-    unknown types still fall back to ``DefaultController`` in
-    ``ControllerRegistry.create``. Per-request ``controller_config``
-    overrides remain, but the *default* parameters come only from
-    gateway config.
+    Factories and display metadata (name, description, settings schema)
+    are registered together, so adding a controller means editing this one
+    function. Per-request ``controller_config`` overrides remain, but the
+    *default* parameters come only from gateway config.
     """
     from minimal_harness.agent.controller import (
         DefaultController,
@@ -667,13 +667,33 @@ def build_controller_registry(settings: ConfigSchema) -> ControllerRegistry:
     )
 
     reg = ControllerRegistry()
-    reg.register("default", lambda llm_provider: DefaultController())
+    reg.register(
+        "default",
+        lambda llm_provider: DefaultController(),
+        metadata={
+            "display_name": "Standard",
+            "display_name_zh": "标准模式",
+            "description": "Agent 跑完就停，单轮回答。",
+        },
+    )
     reg.register(
         "goal",
         lambda llm_provider: GoalController(
             llm_provider=llm_provider,
             max_goal_rounds=settings.goal_max_rounds,
         ),
+        metadata={
+            "display_name": "Goal",
+            "display_name_zh": "目标模式",
+            "description": "judge LLM 判断目标是否完成，未完成则自动继续。",
+            "settings": [
+                {
+                    "key": "max_goal_rounds",
+                    "type": "number",
+                    "default": settings.goal_max_rounds,
+                }
+            ],
+        },
     )
     reg.register(
         "timer",
@@ -681,5 +701,18 @@ def build_controller_registry(settings: ConfigSchema) -> ControllerRegistry:
             llm_provider=llm_provider,
             default_duration=settings.timer_default_duration,
         ),
+        metadata={
+            "display_name": "Timer",
+            "display_name_zh": "计时模式",
+            "description": "在指定时长内持续工作，时间到自动停止。",
+            "settings": [
+                {
+                    "key": "duration",
+                    "type": "string",
+                    "default": settings.timer_default_duration,
+                    "placeholder": "e.g. 30m, 1h, 300s",
+                }
+            ],
+        },
     )
     return reg
