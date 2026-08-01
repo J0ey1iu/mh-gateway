@@ -11,8 +11,8 @@ controller"的活样本：框架只提供 ``Controller`` Protocol、
   共享骨架。每轮 ``agent.run()`` 之后调一次 judge LLM，一次调用同时产出
   "是否停止"和"下一轮 prompt"（``_evaluate()``）。
 - :class:`GoalController`——judge 判定 DONE 就停，否则用 ``NEXT: …`` 继续。
-- :class:`TimerController`——累计运行时间 >= 用户指定时长就停；时间未到时
-  judge 说 DONE 也强制继续（模板 prompt 兜底）。
+- :class:`TimerController`——累计运行时间 >= 用户指定时长就停；时间未到
+  则直接以逻辑拼接的"用户期望"指令继续（不调 judge LLM）。
 """
 
 from __future__ import annotations
@@ -375,7 +375,12 @@ class GoalController(_LoopingController):
 
 
 class TimerController(_LoopingController):
-    """累计运行时间 >= 用户指定时长就停；时间未到则强制继续（judge 说 DONE 也继续）。"""
+    """累计运行时间 >= 用户指定时长就停；时间未到则继续。
+
+    与 goal 不同，timer 的"是否继续"完全由时间决定（时间未到必然继续），
+    所以不需要 judge LLM：下一轮输入直接以"用户期望"的视角逻辑拼接——
+    用户期望至少投入多少时间、已过多少、还剩多少、应更好地完成任务。
+    """
 
     def __init__(
         self,
@@ -403,26 +408,15 @@ class TimerController(_LoopingController):
         if elapsed >= duration:
             return True, None  # 时间到了 → 停
 
-        # 时间没到 → 强制继续。先问 judge 要 prompt
-        time_ctx = (
-            f"Time context: The user allocated {_format_duration(duration)} for this "
-            f"task. {_format_duration(elapsed)} has elapsed, "
-            f"{_format_duration(duration - elapsed)} remaining."
+        # 时间没到 → 必然继续，无需 judge LLM。下一轮输入以"用户期望"的
+        # 视角逻辑拼接：用户期望至少投入 duration，现在才过了 elapsed，
+        # 还剩 duration - elapsed，应更好地完成用户指令。
+        remaining = _format_duration(duration - elapsed)
+        next_prompt = (
+            f"The user expects this task to take at least "
+            f"{_format_duration(duration)} of your time. Only "
+            f"{_format_duration(elapsed)} has elapsed so far, so you still "
+            f"have {remaining}. Consider how to better fulfill the user's "
+            f"request with the remaining time."
         )
-        next_prompt = await self._call_judge(
-            memory,
-            extra_system_text=time_ctx,
-            stop_event=stop_event,
-        )
-
-        if next_prompt is not None:
-            return False, next_prompt
-
-        # judge 说 DONE 或出错，但时间未到——用模板 prompt 强制继续
-        forced = (
-            f"The allocated time ({_format_duration(duration)}) has not yet elapsed "
-            f"({_format_duration(elapsed)} elapsed, "
-            f"{_format_duration(duration - elapsed)} remaining). "
-            f"Continue working on the original task."
-        )
-        return False, forced
+        return False, next_prompt
