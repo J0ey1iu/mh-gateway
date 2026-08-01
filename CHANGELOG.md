@@ -13,6 +13,13 @@
   endpoint; goal / timer registered with config-backed defaults;
   ControllerStart / Continue / End events serialised on the chat SSE
   stream.
+- feat(controllers): goal/timer 第 2 轮起的系统自动 prompt 通过
+  `Agent.run(user_message_meta={"source": "auto"})` 打标记持久化；
+  message API 项带 `auto: true`，前端据此与真实用户输入区分渲染。
+  需要 minimal-harness>=0.8.0a1。
+- change(controllers): timer 模式不再调 judge LLM——时间未到的下一轮输入
+  直接以"用户期望"视角逻辑拼接（期望至少投入的时长、已过时长、剩余时长、
+  更好地完成用户指令），轮间零 LLM 等待。goal 模式保留 judge。
 
 ## 0.1.1a2
 

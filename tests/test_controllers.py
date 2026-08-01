@@ -83,6 +83,7 @@ class _FakeAgent:
     def __init__(self, events: list[Any] | None = None) -> None:
         self.events: list[Any] = events or []
         self.run_inputs: list[Any] = []
+        self.run_kwargs: list[dict[str, Any]] = []
 
     async def run(
         self,
@@ -96,6 +97,7 @@ class _FakeAgent:
         **kwargs: Any,
     ):
         self.run_inputs.append(user_input)
+        self.run_kwargs.append(kwargs)
         for event in self.events:
             yield event
 
@@ -189,8 +191,10 @@ class TestGoalController:
         assert len(continues) == 1
         assert continues[0].next_prompt == "do more"
 
-        # 第二轮 agent 收到的输入是 judge 的 next_prompt
+        # 第二轮 agent 收到的输入是 judge 的 next_prompt，且带上 auto 标记
         assert agent.run_inputs[1] == [{"type": "text", "text": "do more"}]
+        assert agent.run_kwargs[0].get("user_message_meta") is None
+        assert agent.run_kwargs[1].get("user_message_meta") == {"source": "auto"}
 
         end = events[-1]
         assert isinstance(end, ControllerEnd)
@@ -328,7 +332,14 @@ class TestTimerController:
 
         continues = [e for e in events if isinstance(e, ControllerContinue)]
         assert len(continues) == 2  # 前 2 轮 elapsed(7/14) < 20s → 继续
-        assert continues[0].next_prompt == "keep going"
+        # 继续指令是纯逻辑拼接的用户期望描述，不经过 judge LLM
+        assert (
+            "The user expects this task to take at least 20s"
+            in continues[0].next_prompt
+        )
+        assert "Only 7s has elapsed" in continues[0].next_prompt
+        assert "13s" in continues[0].next_prompt
+        assert controller._llm_provider.calls == []  # type: ignore[attr-defined]
         end = events[-1]
         assert isinstance(end, ControllerEnd)
         assert end.exceeded is False  # 第 3 轮 elapsed 21s ≥ 20s → 时间到停
@@ -351,7 +362,8 @@ class TestTimerController:
         assert end.response == "r1"
         assert controller._llm_provider.calls == []  # type: ignore[attr-defined]
 
-    async def test_judge_returns_done_but_time_not_up_uses_forced_prompt(self):
+    async def test_time_not_up_returns_logical_continue_prompt(self):
+        """时间未到时不调 judge，直接返回用户期望视角的逻辑拼接指令。"""
         clock = _FakeClock(1000.0, advance=11.0)  # 第 2 轮 elapsed 22s ≥ 20s 停
         agent = _FakeAgent([_agent_end(response="r1"), _agent_end(response="r2")])
         controller = TimerController(FakeLLMProvider(["DONE"]), default_duration="20s")
@@ -359,23 +371,19 @@ class TestTimerController:
 
         continues = [e for e in events if isinstance(e, ControllerContinue)]
         assert len(continues) == 1
-        assert "Continue working on the original task" in continues[0].next_prompt
-        assert "20s" in continues[0].next_prompt
+        assert (
+            "The user expects this task to take at least 20s"
+            in continues[0].next_prompt
+        )
+        assert "11s" in continues[0].next_prompt
+        assert "9s" in continues[0].next_prompt
+        assert "better fulfill the user's request" in continues[0].next_prompt
+        # judge 从未被调用——继续指令是纯逻辑拼接
+        assert controller._llm_provider.calls == []  # type: ignore[attr-defined]
 
-    async def test_judge_returns_next_with_time_context(self):
-        clock = _FakeClock(1000.0, advance=11.0)  # 第 2 轮 elapsed 22s ≥ 20s 停
-        agent = _FakeAgent([_agent_end(response="r1"), _agent_end(response="r2")])
-        provider = FakeLLMProvider(["NEXT: finish the rest"])
-        controller = TimerController(provider, default_duration="20s")
-        events = await self._collect_with_clock(controller, agent, clock)
-
-        continues = [e for e in events if isinstance(e, ControllerContinue)]
-        assert continues[0].next_prompt == "finish the rest"
-
-        # judge 的系统 prompt 带时间上下文
-        system_msg = provider.calls[0]["messages"][0]["content"]
-        assert "Time context" in system_msg
-        assert "20s" in system_msg
+        # 第二轮（系统自动继续）的 user 消息同样带 auto 标记
+        assert agent.run_kwargs[0].get("user_message_meta") is None
+        assert agent.run_kwargs[1].get("user_message_meta") == {"source": "auto"}
 
     async def test_duration_parsing(self):
         assert _parse_duration("30m") == 1800
@@ -414,7 +422,7 @@ class TestTimerController:
         )
         end = events[-1]
         assert isinstance(end, ControllerEnd)
-        # 5 < 10s → 继续，但 judge 返回 None（空列表默认 DONE）→ forced prompt
+        # 5 < 10s → 时间未到，直接逻辑拼接继续指令
         assert any(isinstance(e, ControllerContinue) for e in events)
 
 
