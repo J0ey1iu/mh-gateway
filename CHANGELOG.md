@@ -20,6 +20,8 @@
 - change(controllers): timer 模式不再调 judge LLM——时间未到的下一轮输入
   直接以"用户期望"视角逻辑拼接（期望至少投入的时长、已过时长、剩余时长、
   更好地完成用户指令），轮间零 LLM 等待。goal 模式保留 judge。
+- chore: bump `mh-service-kit` pin from `>=0.1.1` to `>=0.1.2a1`
+  (lockstep with publish set).
 
 ## 0.1.1a2
 

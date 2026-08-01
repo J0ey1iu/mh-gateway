@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
     "minimal-harness>=0.8.0a1",
-    "mh-service-kit>=0.1.1",
+    "mh-service-kit>=0.1.2a1",
     "python-multipart>=0.0.20",
 ] 
 
