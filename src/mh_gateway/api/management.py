@@ -13,6 +13,7 @@ from mh_gateway.adapters import Feedback
 
 from mh_gateway.api.dependencies import require_permission
 from mh_gateway.llm import LLMProviderConfig
+from mh_gateway.services.runtime_service import build_controller_registry
 from minimal_harness.agent.factory import get_builtin_agent_type_schemas
 from minimal_harness.tool.script_parser import parse_tool_script
 
@@ -506,6 +507,22 @@ async def list_agent_types(
     user_id: str = Depends(require_permission("manage:agent:*")),
 ) -> list[dict[str, Any]]:
     return get_builtin_agent_type_schemas()
+
+
+# ── Controllers ────────────────────────────────────────────────────────────
+
+
+@router.get("/controllers")
+async def list_controllers(
+    request: Request,
+) -> list[dict[str, Any]]:
+    """ChatRequest.controller 可选的 Controller 目录（无需权限）。
+
+    类型列表与展示元数据来自 controller registry 的 ``catalog()``
+    （``build_controller_registry`` 注册时一并登记，单一来源）。
+    """
+    settings = request.app.state.adapters.settings
+    return build_controller_registry(settings).catalog()
 
 
 @router.get("/providers")
@@ -1177,9 +1194,7 @@ async def batch_delete_feedback(
     if adapters.feedback is None:
         raise HTTPException(501, "Feedback storage not configured")
     count = await adapters.feedback.delete_many(body.ids)
-    logger.info(
-        "Feedback batch-deleted %d items by user=%s", count, user_id
-    )
+    logger.info("Feedback batch-deleted %d items by user=%s", count, user_id)
     return {"deleted": count}
 
 
@@ -1198,7 +1213,9 @@ async def update_feedback_status(
         raise HTTPException(404, "Feedback not found")
     logger.info(
         "Feedback status updated id=%s status=%s by user=%s",
-        feedback_id, body.status, user_id,
+        feedback_id,
+        body.status,
+        user_id,
     )
     return _feedback_to_dict(fb)
 
@@ -1237,12 +1254,14 @@ async def export_feedback(
         date_from=date_from,
         date_to=date_to,
     )
-    lines = ["feedback_id,session_id,user_id,agent_name,feedback_type,source,status,comment,created_at"]
+    lines = [
+        "feedback_id,session_id,user_id,agent_name,feedback_type,source,status,comment,created_at"
+    ]
     for fb in items:
         comment = (fb.comment or "").replace('"', '""')
         lines.append(
-            f'{fb.feedback_id},{fb.session_id},{fb.user_id},{fb.agent_name},'
-            f'{fb.feedback_type},{fb.source},{fb.status},'
+            f"{fb.feedback_id},{fb.session_id},{fb.user_id},{fb.agent_name},"
+            f"{fb.feedback_type},{fb.source},{fb.status},"
             f'"{comment}",{fb.created_at}'
         )
     return Response(

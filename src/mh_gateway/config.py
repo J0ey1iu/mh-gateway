@@ -34,6 +34,11 @@ class ConfigSchema(BaseModel):
     metrics_enabled: bool = False
     metrics_push_interval: int = 60
 
+    # ── Controllers ─────────────────────────────────
+    # 默认参数；per-request 的 controller_config 优先。
+    goal_max_rounds: int = 5
+    timer_default_duration: str = "30m"
+
     @property
     def database_url(self) -> str:
         return self.db_path

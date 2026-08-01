@@ -32,6 +32,10 @@ router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 
 class ChatRequest(BaseModel):
     message: str
+    # Controller 选择与运行时参数（per-request）。
+    # controller_config 例如 {"max_goal_rounds": 5} 或 {"duration": "30m"}
+    controller: str = "default"
+    controller_config: dict[str, Any] = {}
 
 
 async def _resolve_tool_display_name(
@@ -124,6 +128,8 @@ async def chat(
                     locale=locale,
                     scenario_id=scenario_id,
                     trace_id=trace_id,
+                    controller_type=body.controller,
+                    controller_config=body.controller_config,
                 ):
                     yield event
             finally:
@@ -155,6 +161,8 @@ async def _stream_events(
     locale: str = "",
     scenario_id: str = "",
     trace_id: str = "",
+    controller_type: str = "default",
+    controller_config: dict[str, Any] | None = None,
 ) -> AsyncIterator[str]:
     task = None
     stop_event = None
@@ -177,6 +185,8 @@ async def _stream_events(
             memory_id=memory_id,
             tool_names=tool_names,
             context={"locale": locale} if locale else None,
+            controller_type=controller_type,
+            controller_config=controller_config,
         )
 
         while True:

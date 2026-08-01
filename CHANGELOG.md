@@ -1,5 +1,31 @@
 # Change Log
 
+## 0.1.1a3
+
+- refactor(controller): `GoalController` / `TimerController` now live in
+  `mh_gateway.services.controllers` (previously imported from
+  `minimal-harness`) — the gateway implements the looping controllers
+  itself against the SDK `Controller` protocol, validating that external
+  apps can plug custom controllers into the layer.
+- feat(controller): per-request `ChatRequest.controller` /
+  `controller_config` routed through to the runtime Controller layer
+  (default / goal / timer); `GET /api/v1/management/controllers` catalog
+  endpoint; goal / timer registered with config-backed defaults;
+  ControllerStart / Continue / End events serialised on the chat SSE
+  stream.
+
+## 0.1.1a2
+
+- feat(metrics): persistent metrics repository, middleware, and
+  management API.
+- feat(feedback): user feedback endpoints (`POST /api/v1/feedback`,
+  management list / detail / export), built-in `submit_feedback_fn`
+  tool, session replay highlight matching.
+
+## 0.1.1a1
+
+- chore: bump 0.1.0 → 0.1.1a1 (pre-release alignment).
+
 ## 0.1.0a9
 
 - chore: bump `minimal-harness` pin from `==0.7.0a7` to `==0.7.0a8`

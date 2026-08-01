@@ -1627,6 +1627,33 @@
         }
       }
     },
+    "/api/v1/management/controllers": {
+      "get": {
+        "tags": [
+          "management"
+        ],
+        "summary": "List Controllers",
+        "description": "ChatRequest.controller \u53ef\u9009\u7684 Controller \u76ee\u5f55\u3002\n\n\u7531 chat \u8f93\u5165\u6846\u4e0b\u62c9\u83dc\u5355\u6d88\u8d39\u3002default \u662f registry \u7684\u9690\u5f0f\u56de\u9000\uff0c\ngoal / timer \u7531 create_runtime \u6ce8\u518c\uff0c\u9ed8\u8ba4\u53c2\u6570\u6765\u81ea gateway config\u3002",
+        "operationId": "list_controllers_api_v1_management_controllers_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response List Controllers Api V1 Management Controllers Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/management/providers": {
       "get": {
         "tags": [
@@ -3615,6 +3642,17 @@
           "message": {
             "type": "string",
             "title": "Message"
+          },
+          "controller": {
+            "type": "string",
+            "title": "Controller",
+            "default": "default"
+          },
+          "controller_config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Controller Config",
+            "default": {}
           }
         },
         "type": "object",
