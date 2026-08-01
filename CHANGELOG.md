@@ -1,15 +1,12 @@
 # Change Log
 
-## 0.1.1a4
+## 0.1.1a3
 
 - refactor(controller): `GoalController` / `TimerController` now live in
   `mh_gateway.services.controllers` (previously imported from
   `minimal-harness`) — the gateway implements the looping controllers
   itself against the SDK `Controller` protocol, validating that external
   apps can plug custom controllers into the layer.
-
-## 0.1.1a3
-
 - feat(controller): per-request `ChatRequest.controller` /
   `controller_config` routed through to the runtime Controller layer
   (default / goal / timer); `GET /api/v1/management/controllers` catalog
