@@ -1,6 +1,6 @@
 # Change Log
 
-## Unreleased
+## 0.1.1a3
 
 - feat(controller): per-request `ChatRequest.controller` /
   `controller_config` routed through to the runtime Controller layer
@@ -8,6 +8,18 @@
   endpoint; goal / timer registered with config-backed defaults;
   ControllerStart / Continue / End events serialised on the chat SSE
   stream.
+
+## 0.1.1a2
+
+- feat(metrics): persistent metrics repository, middleware, and
+  management API.
+- feat(feedback): user feedback endpoints (`POST /api/v1/feedback`,
+  management list / detail / export), built-in `submit_feedback_fn`
+  tool, session replay highlight matching.
+
+## 0.1.1a1
+
+- chore: bump 0.1.0 → 0.1.1a1 (pre-release alignment).
 
 ## 0.1.0a9
 
