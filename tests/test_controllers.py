@@ -83,6 +83,7 @@ class _FakeAgent:
     def __init__(self, events: list[Any] | None = None) -> None:
         self.events: list[Any] = events or []
         self.run_inputs: list[Any] = []
+        self.run_kwargs: list[dict[str, Any]] = []
 
     async def run(
         self,
@@ -96,6 +97,7 @@ class _FakeAgent:
         **kwargs: Any,
     ):
         self.run_inputs.append(user_input)
+        self.run_kwargs.append(kwargs)
         for event in self.events:
             yield event
 
@@ -189,8 +191,10 @@ class TestGoalController:
         assert len(continues) == 1
         assert continues[0].next_prompt == "do more"
 
-        # 第二轮 agent 收到的输入是 judge 的 next_prompt
+        # 第二轮 agent 收到的输入是 judge 的 next_prompt，且带上 auto 标记
         assert agent.run_inputs[1] == [{"type": "text", "text": "do more"}]
+        assert agent.run_kwargs[0].get("user_message_meta") is None
+        assert agent.run_kwargs[1].get("user_message_meta") == {"source": "auto"}
 
         end = events[-1]
         assert isinstance(end, ControllerEnd)
@@ -361,6 +365,10 @@ class TestTimerController:
         assert len(continues) == 1
         assert "Continue working on the original task" in continues[0].next_prompt
         assert "20s" in continues[0].next_prompt
+
+        # 第二轮（系统强制继续）的 user 消息同样带 auto 标记
+        assert agent.run_kwargs[0].get("user_message_meta") is None
+        assert agent.run_kwargs[1].get("user_message_meta") == {"source": "auto"}
 
     async def test_judge_returns_next_with_time_context(self):
         clock = _FakeClock(1000.0, advance=11.0)  # 第 2 轮 elapsed 22s ≥ 20s 停

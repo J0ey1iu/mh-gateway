@@ -193,6 +193,11 @@ Rules:
             run_kwargs: dict[str, Any] = {}
             if llm_kwargs is not None:
                 run_kwargs["llm_kwargs"] = llm_kwargs
+            if round_count > 1:
+                # 第 2 轮起，输入是系统（judge）自动生成的 prompt。给 user
+                # 消息打 source="auto" 标记：持久化后前端可区分渲染；该字段
+                # 会被 LLM provider 的消息转换器剥离，不影响模型调用。
+                run_kwargs["user_message_meta"] = {"source": "auto"}
             async for event in agent.run(
                 user_input=current_input,
                 stop_event=stop_event,
