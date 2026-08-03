@@ -150,7 +150,17 @@ def serialize_harness_event(event: Any) -> dict[str, Any]:
             return {
                 "content": event.chunk.content,
                 "reasoning": event.chunk.reasoning,
-                "tool_calls": event.chunk.tool_calls,
+                "tool_calls": [
+                    {
+                        "index": tc.index,
+                        "id": tc.id,
+                        "name": tc.name,
+                        "arguments": tc.arguments,
+                    }
+                    for tc in event.chunk.tool_calls
+                ]
+                if event.chunk.tool_calls
+                else None,
             }
         return {}
     if isinstance(event, LLMEnd):

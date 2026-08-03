@@ -233,6 +233,34 @@ async def submit_feedback_fn(
     }
 
 
+async def _write_chunked(f, content: str) -> AsyncIterator[dict[str, Any]]:
+    """Write *content* in blocks, yielding progress between blocks.
+
+    A single ``f.write(content)`` gives the UI nothing to show for large
+    payloads — the tool card just spins until it finishes. Chunking makes
+    progress visible ("Writing: N/M chars") while bounding the yield
+    count (~20 events regardless of size) so the persisted progress list
+    stays small.
+    """
+    total = len(content)
+    if total == 0:
+        f.write("")
+        return
+    chunk_size = max(1024, total // 20)
+    if total <= chunk_size:
+        # Small payloads stay single-shot — no progress noise.
+        f.write(content)
+        return
+    written = 0
+    while written < total:
+        f.write(content[written : written + chunk_size])
+        written = min(total, written + chunk_size)
+        yield {
+            "status": "progress",
+            "message": f"Writing: {written}/{total} chars",
+        }
+
+
 async def local_file_operator_fn(
     operation: str = "",
     path: str = "",
@@ -293,7 +321,8 @@ async def local_file_operator_fn(
                     "message": f"Created parent directory: {parent}",
                 }
             with open(path, "w", encoding="utf-8") as f:
-                f.write(content)
+                async for p in _write_chunked(f, content):
+                    yield p
             yield {
                 "status": "ok",
                 "message": f"Successfully wrote {len(content)} characters to {path}",
@@ -305,7 +334,8 @@ async def local_file_operator_fn(
             yield {"status": "progress", "message": f"Appending to file: {path}"}
             if os.path.isfile(path):
                 with open(path, "a", encoding="utf-8") as f:
-                    f.write(content)
+                    async for p in _write_chunked(f, content):
+                        yield p
                 yield {
                     "status": "ok",
                     "message": f"Successfully appended {len(content)} characters to {path}",
@@ -352,7 +382,8 @@ async def local_file_operator_fn(
                 )
             )
             with open(path, "w", encoding="utf-8") as f:
-                f.write(new_data)
+                async for p in _write_chunked(f, new_data):
+                    yield p
             yield {
                 "status": "ok",
                 "message": f"Replaced {count} occurrence(s) in {path}",
