@@ -130,6 +130,7 @@ def test_agent_end_fields_at_top_level() -> None:
             exceeded=False,
             interrupted=False,
             error=None,
+            message_id="msg-3",
         )
     )
     assert set(out.keys()) == {
@@ -138,7 +139,9 @@ def test_agent_end_fields_at_top_level() -> None:
         "exceeded",
         "interrupted",
         "error",
+        "message_id",
     }
+    assert out["message_id"] == "msg-3"
 
 
 def test_agent_start_is_empty() -> None:
@@ -188,6 +191,11 @@ def test_memory_update_only_usage() -> None:
 def test_message_event_passes_through() -> None:
     out = serialize_harness_event(MessageEvent(message={"role": "assistant"}))
     assert out == {"message": {"role": "assistant"}}
+    # the canonical id stamped by Memory.add_message rides along verbatim
+    out2 = serialize_harness_event(
+        MessageEvent(message={"role": "assistant", "content": "hi", "id": "msg-0"})
+    )
+    assert out2 == {"message": {"role": "assistant", "content": "hi", "id": "msg-0"}}
 
 
 def test_execution_events_flat() -> None:

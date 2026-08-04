@@ -123,6 +123,7 @@ def serialize_harness_event(event: Any) -> dict[str, Any]:
             "exceeded": event.exceeded,
             "interrupted": event.interrupted,
             "error": event.error,
+            "message_id": event.message_id,
         }
     if isinstance(event, ControllerStart):
         return {
