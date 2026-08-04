@@ -845,6 +845,14 @@ class SessionStoreProtocol(Protocol):
     ) -> list[dict]: ...
 ```
 
+### 消息 ID 约定（重要）
+
+`Memory.add_message` 会在消息进入会话时打上规范 ID `msg-{seq}`（每会话单调递增，随 `MemoryData` 持久化）。
+
+- `get_messages_as_items` 返回的每一项**应优先使用消息自带的 `id`**（`msg.get("id")`），仅对旧行（无 id）回退为位置枚举 `msg-{i}`。
+- 你的 `save_memory` 若按行存储消息，需保证消息 dict 原样落库（含 `id` 字段），否则流式期间客户端拿到的 ID 与刷新后的 ID 不一致。
+- 已打出的 ID 不会因 compaction / tool 消息丢弃而改变，可作为反馈（`target_id`）、引用等写回目标。
+
 ### Session / Message 内部类型
 
 | 类型 | 来源 | 说明 |
