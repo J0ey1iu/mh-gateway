@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import difflib
 import json
 import os
@@ -57,29 +58,69 @@ async def bash_fn(
 
     timeout_s = timeout_ms / 1000.0
 
+    # 滚动窗口：partial_stdout/partial_stderr 只保留尾部，避免逐行携带
+    # 全量输出 —— 大目录遍历等长输出命令下，逐行 join 全量 + 序列化 +
+    # 持久化 + 前端累积是 O(n²) 拷贝，会打满事件循环并撑爆内存。
+    WINDOW_LIMIT = 64 * 1024
+    # 批量冲刷：每 50 行或 100ms 才发一个进度事件，海量行输出
+    # （如遍历数万文件）不会产生海量 SSE 事件。
+    FLUSH_LINES = 50
+    FLUSH_INTERVAL = 0.1
+
     try:
         process = await asyncio.create_subprocess_exec(
             *shell_cmd,
             cwd=cwd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            # StreamReader.readline() 默认 limit 64KB：单行超过会抛 ValueError 让
+            # pump 静默死亡（表现为 30s 后命令超时、输出为空）。提到 1MB 以容忍
+            # 罕见的长单行（如无换行的超长输出）；更大的行退化为超时报错而非挂死。
+            limit=1024 * 1024,
         )
 
         queue: asyncio.Queue = asyncio.Queue()
         timed_out = False
+        loop = asyncio.get_running_loop()
+        total_out = 0  # 命令实际总输出字节数（用于截断提示）
 
         async def _pump(stream, bufs, label: str) -> None:
+            nonlocal total_out
+            batch: list[str] = []
+            last_flush = loop.time()
             while True:
                 line = await stream.readline()
                 if not line:
                     break
                 text = line.decode("utf-8", errors="replace")
-                bufs.append(text)
-                await queue.put(("chunk", label, text.rstrip("\n\r"), "".join(bufs)))
+                total_out += len(text)
+                batch.append(text)
+                now = loop.time()
+                if len(batch) >= FLUSH_LINES or now - last_flush >= FLUSH_INTERVAL:
+                    joined = "".join(batch)
+                    batch = []
+                    last_flush = now
+                    if len(joined) > WINDOW_LIMIT:
+                        joined = joined[-WINDOW_LIMIT:]
+                    bufs.append(joined)
+                    while sum(len(s) for s in bufs) > WINDOW_LIMIT:
+                        bufs.popleft()
+                    await queue.put(
+                        ("chunk", label, joined.rstrip("\n\r"), "".join(bufs))
+                    )
+            if batch:
+                joined = "".join(batch)
+                batch = []
+                if len(joined) > WINDOW_LIMIT:
+                    joined = joined[-WINDOW_LIMIT:]
+                bufs.append(joined)
+                while sum(len(s) for s in bufs) > WINDOW_LIMIT:
+                    bufs.popleft()
+                await queue.put(("chunk", label, joined.rstrip("\n\r"), "".join(bufs)))
             await queue.put(("done", label, None, "".join(bufs)))
 
-        stdout_bufs: list[str] = []
-        stderr_bufs: list[str] = []
+        stdout_bufs: collections.deque[str] = collections.deque()
+        stderr_bufs: collections.deque[str] = collections.deque()
 
         t_stdout = asyncio.create_task(_pump(process.stdout, stdout_bufs, "stdout"))
         t_stderr = asyncio.create_task(_pump(process.stderr, stderr_bufs, "stderr"))
@@ -119,6 +160,7 @@ async def bash_fn(
         returncode = process.returncode if not timed_out else -1
 
         line_count = stdout_str.count("\n")
+        truncated = total_out > WINDOW_LIMIT
 
         if timed_out:
             yield {
@@ -133,13 +175,21 @@ async def bash_fn(
         elif returncode == 0:
             yield {
                 "status": "ok",
-                "message": f"Command completed successfully ({line_count} lines of output)"
-                if line_count
-                else "Command completed successfully (no output)",
+                "message": (
+                    f"Command completed successfully, output truncated (showing last {WINDOW_LIMIT} of {total_out} bytes)"
+                    if truncated
+                    else (
+                        f"Command completed successfully ({line_count} lines of output)"
+                        if line_count
+                        else "Command completed successfully (no output)"
+                    )
+                ),
                 "stdout": stdout_str,
                 "stderr": stderr_str,
                 "exit_code": 0,
                 "command": command[:500],
+                "truncated": truncated,
+                "total_output_bytes": total_out,
             }
         else:
             yield {
@@ -150,6 +200,8 @@ async def bash_fn(
                 "exit_code": returncode,
                 "command": command[:500],
                 "suggestion": "Review stderr output and fix the command",
+                "truncated": truncated,
+                "total_output_bytes": total_out,
             }
     except FileNotFoundError:
         yield {
@@ -233,6 +285,34 @@ async def submit_feedback_fn(
     }
 
 
+async def _write_chunked(f, content: str) -> AsyncIterator[dict[str, Any]]:
+    """Write *content* in blocks, yielding progress between blocks.
+
+    A single ``f.write(content)`` gives the UI nothing to show for large
+    payloads — the tool card just spins until it finishes. Chunking makes
+    progress visible ("Writing: N/M chars") while bounding the yield
+    count (~20 events regardless of size) so the persisted progress list
+    stays small.
+    """
+    total = len(content)
+    if total == 0:
+        f.write("")
+        return
+    chunk_size = max(1024, total // 20)
+    if total <= chunk_size:
+        # Small payloads stay single-shot — no progress noise.
+        f.write(content)
+        return
+    written = 0
+    while written < total:
+        f.write(content[written : written + chunk_size])
+        written = min(total, written + chunk_size)
+        yield {
+            "status": "progress",
+            "message": f"Writing: {written}/{total} chars",
+        }
+
+
 async def local_file_operator_fn(
     operation: str = "",
     path: str = "",
@@ -293,7 +373,8 @@ async def local_file_operator_fn(
                     "message": f"Created parent directory: {parent}",
                 }
             with open(path, "w", encoding="utf-8") as f:
-                f.write(content)
+                async for p in _write_chunked(f, content):
+                    yield p
             yield {
                 "status": "ok",
                 "message": f"Successfully wrote {len(content)} characters to {path}",
@@ -305,7 +386,8 @@ async def local_file_operator_fn(
             yield {"status": "progress", "message": f"Appending to file: {path}"}
             if os.path.isfile(path):
                 with open(path, "a", encoding="utf-8") as f:
-                    f.write(content)
+                    async for p in _write_chunked(f, content):
+                        yield p
                 yield {
                     "status": "ok",
                     "message": f"Successfully appended {len(content)} characters to {path}",
@@ -352,7 +434,8 @@ async def local_file_operator_fn(
                 )
             )
             with open(path, "w", encoding="utf-8") as f:
-                f.write(new_data)
+                async for p in _write_chunked(f, new_data):
+                    yield p
             yield {
                 "status": "ok",
                 "message": f"Replaced {count} occurrence(s) in {path}",

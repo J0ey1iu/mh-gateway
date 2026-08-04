@@ -56,6 +56,42 @@ def test_llm_chunk_without_chunk_yields_empty_dict() -> None:
     assert out == {}
 
 
+def test_llm_chunk_tool_calls_are_plain_dicts() -> None:
+    """Streaming tool-call deltas must serialize as JSON objects, not
+    dataclass repr strings (the frontend accumulates them into the
+    provisional tool-call card)."""
+    from minimal_harness.types import LLMChunkDelta, ToolCallDelta
+
+    chunk = LLMChunk(
+        chunk=LLMChunkDelta(
+            content=None,
+            reasoning=None,
+            tool_calls=[
+                ToolCallDelta(index=0, id="call_1", name="bash", arguments='{"cmd": '),
+                ToolCallDelta(index=0, arguments='"ls"}'),
+            ],
+        )
+    )
+    out = serialize_harness_event(chunk)
+    assert out["tool_calls"] == [
+        {"index": 0, "id": "call_1", "name": "bash", "arguments": '{"cmd": '},
+        {"index": 0, "id": None, "name": None, "arguments": '"ls"}'},
+    ]
+    import json
+
+    # Round-trip through the SSE serializer: must be real JSON, not a
+    # repr string like "ToolCallDelta(index=0, ...)".
+    data = json.loads(json.dumps(out, ensure_ascii=False, default=str))
+    assert isinstance(data["tool_calls"], list)
+    assert data["tool_calls"][0]["name"] == "bash"
+    assert data["tool_calls"][0]["arguments"] == '{"cmd": '
+
+
+def test_llm_chunk_tool_calls_none_when_absent() -> None:
+    out = serialize_harness_event(LLMChunk(chunk=_FakeChunk()))
+    assert out["tool_calls"] is None
+
+
 def test_llm_end_fields_at_top_level() -> None:
     out = serialize_harness_event(
         LLMEnd(
