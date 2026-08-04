@@ -331,6 +331,7 @@ class _MockFeedbackRepo:
         if fb is None:
             return None
         from dataclasses import replace
+
         fb = replace(fb, status=status)
         self._items[feedback_id] = fb
         return fb
@@ -350,11 +351,7 @@ class _MockFeedbackRepo:
         items = list(self._items.values())
         if q:
             q_lower = q.lower()
-            items = [
-                fb
-                for fb in items
-                if fb.user_id and q_lower in fb.user_id.lower()
-            ]
+            items = [fb for fb in items if fb.user_id and q_lower in fb.user_id.lower()]
         if feedback_type:
             items = [fb for fb in items if fb.feedback_type == feedback_type]
         if source:
@@ -362,9 +359,12 @@ class _MockFeedbackRepo:
         if status:
             items = [fb for fb in items if fb.status == status]
         total = len(items)
-        start = (page - 1) * page_size
-        end = start + page_size
-        return items[start:end], total
+        # page_size <= 0 means "all" (matches the API layer convention)
+        if page_size > 0:
+            start = (page - 1) * page_size
+            end = start + page_size
+            items = items[start:end]
+        return items, total
 
     async def close(self):
         pass

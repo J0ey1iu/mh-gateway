@@ -123,6 +123,7 @@ def serialize_harness_event(event: Any) -> dict[str, Any]:
             "exceeded": event.exceeded,
             "interrupted": event.interrupted,
             "error": event.error,
+            "message_id": event.message_id,
         }
     if isinstance(event, ControllerStart):
         return {
@@ -170,6 +171,7 @@ def serialize_harness_event(event: Any) -> dict[str, Any]:
             "tool_calls": event.tool_calls,
             "usage": event.usage,
             "error": event.error,
+            "message_id": event.message_id,
         }
     if isinstance(event, ExecutionStart):
         return {"tool_calls": event.tool_calls}
@@ -235,6 +237,7 @@ def serialize_harness_event(event: Any) -> dict[str, Any]:
             "new_offset": event.new_offset,
             "duration": event.duration,
             "error": event.error,
+            "message_id": event.message_id,
         }
     return {}
 

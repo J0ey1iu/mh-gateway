@@ -100,6 +100,7 @@ def test_llm_end_fields_at_top_level() -> None:
             tool_calls=None,
             usage={"total_tokens": 1},
             error=None,
+            message_id="msg-3",
         )
     )
     assert set(out.keys()) == {
@@ -108,9 +109,11 @@ def test_llm_end_fields_at_top_level() -> None:
         "tool_calls",
         "usage",
         "error",
+        "message_id",
     }
     assert out["content"] == "c"
     assert out["reasoning_content"] == "r"
+    assert out["message_id"] == "msg-3"
 
 
 def test_llm_start_uses_compute_helper() -> None:
@@ -130,6 +133,7 @@ def test_agent_end_fields_at_top_level() -> None:
             exceeded=False,
             interrupted=False,
             error=None,
+            message_id="msg-3",
         )
     )
     assert set(out.keys()) == {
@@ -138,7 +142,9 @@ def test_agent_end_fields_at_top_level() -> None:
         "exceeded",
         "interrupted",
         "error",
+        "message_id",
     }
+    assert out["message_id"] == "msg-3"
 
 
 def test_agent_start_is_empty() -> None:
@@ -188,6 +194,11 @@ def test_memory_update_only_usage() -> None:
 def test_message_event_passes_through() -> None:
     out = serialize_harness_event(MessageEvent(message={"role": "assistant"}))
     assert out == {"message": {"role": "assistant"}}
+    # the canonical id stamped by Memory.add_message rides along verbatim
+    out2 = serialize_harness_event(
+        MessageEvent(message={"role": "assistant", "content": "hi", "id": "msg-0"})
+    )
+    assert out2 == {"message": {"role": "assistant", "content": "hi", "id": "msg-0"}}
 
 
 def test_execution_events_flat() -> None:
@@ -227,6 +238,7 @@ def test_compaction_events_flat() -> None:
             new_offset=2,
             duration=1.0,
             error=None,
+            message_id="msg-8",
         )
     )
     assert set(end.keys()) == {
@@ -235,7 +247,9 @@ def test_compaction_events_flat() -> None:
         "new_offset",
         "duration",
         "error",
+        "message_id",
     }
+    assert end["message_id"] == "msg-8"
 
 
 def test_controller_events_flat() -> None:

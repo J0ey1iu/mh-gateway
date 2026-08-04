@@ -32,9 +32,7 @@ class FeedbackCreateRequest(BaseModel):
 @router.get("")
 async def list_session_feedback(
     request: Request,
-    session_id: str | None = Query(
-        None, description="Filter by session_id"
-    ),
+    session_id: str | None = Query(None, description="Filter by session_id"),
     user_id: str = Depends(resolve_request_identity),
 ) -> list[dict[str, Any]]:
     """Return feedback entries, optionally filtered by session."""
@@ -42,7 +40,13 @@ async def list_session_feedback(
     if adapters.feedback is None:
         return []
     items, _ = await adapters.feedback.list(
-        page=1, page_size=0, q=None
+        page=1,
+        # The session list must return EVERY row for the session — the
+        # endpoint filters by session_id itself after fetching. A large
+        # page_size mirrors the CSV export (page_size=999999); stores
+        # additionally treat page_size <= 0 as "all".
+        page_size=100000,
+        q=None,
     )
     if session_id:
         items = [fb for fb in items if fb.session_id == session_id]

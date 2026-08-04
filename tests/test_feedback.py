@@ -120,7 +120,9 @@ class TestSubmitFeedback:
         )
         assert resp.status_code == 200
         items = resp.json()["items"]
-        fb = next((fb for fb in items if fb["feedback_id"] == data["feedback_id"]), None)
+        fb = next(
+            (fb for fb in items if fb["feedback_id"] == data["feedback_id"]), None
+        )
         assert fb is not None
         assert fb["comment"] == "准确 有用"
         assert fb["category"] == "accuracy"
@@ -143,6 +145,62 @@ class TestSubmitFeedback:
             },
         )
         assert resp.status_code == 403
+
+    def test_session_feedback_list_returns_saved_rows(
+        self, client_with_feedback, auth_header
+    ):
+        """GET /api/v1/feedback?session_id=... must return the rows the
+        frontend needs at refresh time — the endpoint used to pass
+        page_size=0 to the store, which the stores interpret as LIMIT 0,
+        so the list always came back empty although feedback persisted."""
+        adapters = client_with_feedback.app.state.adapters
+        adapters.sessions._sessions["sess-1"] = _FakeSession(
+            session_id="sess-1", user_id="1"
+        )
+
+        # feedback on two different sessions
+        for sid, tid in (("sess-1", "msg-1"), ("sess-1", "msg-2"), ("sess-2", "msg-3")):
+            adapters.sessions._sessions.setdefault(
+                sid, _FakeSession(session_id=sid, user_id="1")
+            )
+            resp = client_with_feedback.post(
+                "/api/v1/feedback",
+                headers=auth_header,
+                json={
+                    "session_id": sid,
+                    "target_type": "message",
+                    "target_id": tid,
+                    "feedback_type": "thumbs_up",
+                },
+            )
+            assert resp.status_code == 200, resp.json()
+
+        resp = client_with_feedback.get(
+            "/api/v1/feedback?session_id=sess-1",
+            headers=auth_header,
+        )
+        assert resp.status_code == 200, resp.json()
+        rows = resp.json()
+        target_ids = {r["target_id"] for r in rows}
+        assert target_ids == {"msg-1", "msg-2"}, rows
+
+        # other session untouched
+        resp = client_with_feedback.get(
+            "/api/v1/feedback?session_id=sess-2",
+            headers=auth_header,
+        )
+        assert [r["target_id"] for r in resp.json()] == ["msg-3"]
+
+    def test_session_feedback_list_empty_session(
+        self, client_with_feedback, auth_header
+    ):
+        """A session with no feedback returns an empty list."""
+        resp = client_with_feedback.get(
+            "/api/v1/feedback?session_id=no-feedback-sess",
+            headers=auth_header,
+        )
+        assert resp.status_code == 200
+        assert resp.json() == []
 
 
 class TestManageFeedback:
