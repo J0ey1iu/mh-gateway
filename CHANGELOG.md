@@ -1,5 +1,19 @@
 # Change Log
 
+## 0.1.1a5
+
+- feat(events): forward `MessageEvent` to the SSE stream (was skipped)
+  and surface `message_id` on `AgentEnd` / `LLMEnd` / `CompactionEnd`
+  — clients get the canonical `msg-{seq}` id for every message, so
+  feedback / references committed during streaming match the ids
+  returned after a session reload (mh-incubator #30).
+- fix(feedback): session feedback list returned empty on refresh —
+  `page_size=0` meant `LIMIT 0` in both stores; stores now treat
+  `page_size <= 0` as "all" and the session list fetches all rows
+  before filtering (mh-incubator #30).
+- docs: customer-adaptation-guide documents the message-id convention
+  and event-ordering contract for session adapters.
+
 ## 0.1.1a4
 
 - fix: serialize streaming tool-call deltas as `{index, id, name,
