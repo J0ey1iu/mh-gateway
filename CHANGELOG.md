@@ -1,5 +1,20 @@
 # Change Log
 
+## 0.1.1a4
+
+- fix: serialize streaming tool-call deltas as `{index, id, name,
+  arguments}` dicts (were repr strings via `json.dumps(default=str)`)
+  so the frontend can render tool-call chunks live (mh-incubator #28).
+- fix: chunked file-write progress — write/append/edit emit bounded
+  `Writing: N/M chars` events instead of one silent write
+  (mh-incubator #28).
+- fix: bounded bash streaming — rolling 64KB tail window + batch flush
+  (every 50 lines / 100ms) + truncation markers; a 10k-line traversal
+  now emits ~200 progress events instead of 10k, and the event loop is
+  no longer starved by O(n²) full-buffer joins (mh-incubator #25).
+- chore: bump `minimal-harness` pin to `>=0.8.0a2`, `mh-service-kit`
+  to `>=0.1.2a2` (lockstep with publish set).
+
 ## 0.1.1a3
 
 - refactor(controller): `GoalController` / `TimerController` now live in
