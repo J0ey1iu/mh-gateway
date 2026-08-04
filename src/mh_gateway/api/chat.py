@@ -6,7 +6,7 @@ from typing import Any, AsyncIterator
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from minimal_harness.tool.registry import ToolRegistry
-from minimal_harness.types import MemoryUpdate, MessageEvent, ToolStart
+from minimal_harness.types import MemoryUpdate, ToolStart
 from pydantic import BaseModel
 
 from mh_gateway.api.dependencies import (
@@ -194,9 +194,10 @@ async def _stream_events(
             if event is None:
                 break
 
-            if isinstance(event, MessageEvent):
-                continue
-
+            # MessageEvent carries the canonical id of every message as it
+            # is produced (Memory.add_message stamps msg-{seq}); forwarding
+            # it lets the frontend associate each rendered record with the
+            # same id the session reload will return.
             if isinstance(event, MemoryUpdate):
                 try:
                     await store.update_usage(session.memory, memory_id)

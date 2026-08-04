@@ -100,6 +100,7 @@ def test_llm_end_fields_at_top_level() -> None:
             tool_calls=None,
             usage={"total_tokens": 1},
             error=None,
+            message_id="msg-3",
         )
     )
     assert set(out.keys()) == {
@@ -108,9 +109,11 @@ def test_llm_end_fields_at_top_level() -> None:
         "tool_calls",
         "usage",
         "error",
+        "message_id",
     }
     assert out["content"] == "c"
     assert out["reasoning_content"] == "r"
+    assert out["message_id"] == "msg-3"
 
 
 def test_llm_start_uses_compute_helper() -> None:
@@ -235,6 +238,7 @@ def test_compaction_events_flat() -> None:
             new_offset=2,
             duration=1.0,
             error=None,
+            message_id="msg-8",
         )
     )
     assert set(end.keys()) == {
@@ -243,7 +247,9 @@ def test_compaction_events_flat() -> None:
         "new_offset",
         "duration",
         "error",
+        "message_id",
     }
+    assert end["message_id"] == "msg-8"
 
 
 def test_controller_events_flat() -> None:
