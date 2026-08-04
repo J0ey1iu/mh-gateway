@@ -852,6 +852,11 @@ class SessionStoreProtocol(Protocol):
 - `get_messages_as_items` 返回的每一项**应优先使用消息自带的 `id`**（`msg.get("id")`），仅对旧行（无 id）回退为位置枚举 `msg-{i}`。
 - 你的 `save_memory` 若按行存储消息，需保证消息 dict 原样落库（含 `id` 字段），否则流式期间客户端拿到的 ID 与刷新后的 ID 不一致。
 - 已打出的 ID 不会因 compaction / tool 消息丢弃而改变，可作为反馈（`target_id`）、引用等写回目标。
+- `add_message` 会**原地**给传入的消息 dict 打上 `id`（幂等：已有 id 不覆盖），需要未打号视图时先 `dict(message)` 拷贝。
+
+#### 事件顺序契约
+
+同一轮 LLM 生成的 `MessageEvent` **先于**该轮的 `LLMEnd` 到达（agent 先把消息写入内存并打号，再广播携带 `message_id` 的 `LLMEnd`）。`LLMEnd.message_id` = 该轮 assistant 消息的 ID；`AgentEnd.message_id` = 本轮最后一条 assistant 消息的 ID（无则 `None`）；`CompactionEnd.message_id` = summary 消息的 ID（失败为 `None`）。Tool 消息没有 `ToolEnd.message_id`——工具结果在全部工具完成后才按声明顺序落库，ID 由紧随其后的 `MessageEvent(role="tool")` 携带。网关将 `MessageEvent` 原样转发到 SSE 流，消费方应据此把每条消息的 ID 关联到渲染记录，而不是在 `LLMEnd`/`AgentEnd` 处猜测。
 
 ### Session / Message 内部类型
 
