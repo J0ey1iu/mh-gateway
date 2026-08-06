@@ -336,6 +336,16 @@ class _MockFeedbackRepo:
         self._items[feedback_id] = fb
         return fb
 
+    async def update_content(self, feedback_id, comment=None, category=None):
+        fb = self._items.get(feedback_id)
+        if fb is None:
+            return None
+        from dataclasses import replace
+
+        fb = replace(fb, comment=comment, category=category)
+        self._items[feedback_id] = fb
+        return fb
+
     async def list(
         self,
         *,

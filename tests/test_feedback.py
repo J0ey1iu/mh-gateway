@@ -203,6 +203,130 @@ class TestSubmitFeedback:
         assert resp.json() == []
 
 
+class TestUpdateDeleteFeedback:
+    """PUT/DELETE /api/v1/feedback/{id} — backfill comment and cancel like."""
+
+    @staticmethod
+    def _submit(client, headers, session_id="sess-1", user_id="1", comment=None):
+        client.app.state.adapters.sessions._sessions.setdefault(
+            session_id, _FakeSession(session_id=session_id, user_id=user_id)
+        )
+        resp = client.post(
+            "/api/v1/feedback",
+            headers=headers,
+            json={
+                "session_id": session_id,
+                "target_type": "message",
+                "target_id": "msg-0",
+                "feedback_type": "thumbs_up",
+                "comment": comment,
+            },
+        )
+        assert resp.status_code == 200, resp.json()
+        return resp.json()["feedback_id"]
+
+    @staticmethod
+    def _seed_feedback(client, user_id):
+        """Seed a feedback owned by *user_id* straight into the store."""
+        import asyncio
+
+        from mh_gateway.adapters import Feedback
+
+        repo = client.app.state.adapters.feedback
+        fb = Feedback(
+            feedback_id=f"fb_seed_{user_id}",
+            session_id="sess-1",
+            target_type="message",
+            target_id="msg-0",
+            user_id=user_id,
+            feedback_type="thumbs_up",
+        )
+        asyncio.run(repo.save(fb))
+        return fb.feedback_id
+
+    @staticmethod
+    def _get_feedback(client, feedback_id):
+        import asyncio
+
+        return asyncio.run(client.app.state.adapters.feedback.get(feedback_id))
+
+    def test_put_backfills_comment_and_category(
+        self, client_with_feedback, auth_header
+    ):
+        """A bare like gains a comment via the second step."""
+        client = client_with_feedback
+        fb_id = self._submit(client, auth_header)
+
+        resp = client.put(
+            f"/api/v1/feedback/{fb_id}",
+            headers=auth_header,
+            json={"comment": "Great answer", "category": "accuracy"},
+        )
+        assert resp.status_code == 200, resp.json()
+        assert resp.json()["ok"] is True
+
+        fb = self._get_feedback(client, fb_id)
+        assert fb.comment == "Great answer"
+        assert fb.category == "accuracy"
+        # untouched fields survive
+        assert fb.feedback_type == "thumbs_up"
+
+    def test_put_partial_backfill_keeps_existing_comment(
+        self, client_with_feedback, auth_header
+    ):
+        """Sending only category must not wipe an existing comment."""
+        client = client_with_feedback
+        fb_id = self._submit(client, auth_header, comment="First note")
+
+        resp = client.put(
+            f"/api/v1/feedback/{fb_id}",
+            headers=auth_header,
+            json={"category": "speed"},
+        )
+        assert resp.status_code == 200, resp.json()
+        fb = self._get_feedback(client, fb_id)
+        assert fb.comment == "First note"
+        assert fb.category == "speed"
+
+    def test_put_not_found(self, client_with_feedback, auth_header):
+        resp = client_with_feedback.put(
+            "/api/v1/feedback/fb_nope", headers=auth_header, json={"comment": "x"}
+        )
+        assert resp.status_code == 404
+
+    def test_put_not_owned(self, client_with_feedback, auth_header):
+        """A user may only backfill their own feedback."""
+        client = client_with_feedback
+        fb_id = self._seed_feedback(client, user_id="2")
+        resp = client.put(
+            f"/api/v1/feedback/{fb_id}",
+            headers=auth_header,  # resolves to user "1"
+            json={"comment": "x"},
+        )
+        assert resp.status_code == 403
+
+    def test_delete_cancels_like(self, client_with_feedback, auth_header):
+        client = client_with_feedback
+        fb_id = self._submit(client, auth_header)
+
+        resp = client.delete(f"/api/v1/feedback/{fb_id}", headers=auth_header)
+        assert resp.status_code == 200, resp.json()
+        assert resp.json()["ok"] is True
+        assert self._get_feedback(client, fb_id) is None
+
+    def test_delete_not_found(self, client_with_feedback, auth_header):
+        resp = client_with_feedback.delete(
+            "/api/v1/feedback/fb_nope", headers=auth_header
+        )
+        assert resp.status_code == 404
+
+    def test_delete_not_owned(self, client_with_feedback, auth_header):
+        client = client_with_feedback
+        fb_id = self._seed_feedback(client, user_id="2")
+        resp = client.delete(f"/api/v1/feedback/{fb_id}", headers=auth_header)
+        assert resp.status_code == 403
+
+
 class TestManageFeedback:
     """GET /api/v1/management/feedback — admin listing."""
 

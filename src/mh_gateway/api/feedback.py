@@ -1,6 +1,8 @@
 """User feedback submission endpoint.
 
 ``POST /api/v1/feedback`` — submit feedback on a message or tool call.
+``PUT /api/v1/feedback/{id}`` — backfill comment/category on an entry.
+``DELETE /api/v1/feedback/{id}`` — cancel a like/dislike.
 """
 
 from __future__ import annotations
@@ -27,6 +29,23 @@ class FeedbackCreateRequest(BaseModel):
     feedback_type: str  # "thumbs_up" | "thumbs_down"
     comment: str | None = None
     category: str | None = None
+
+
+class FeedbackUpdateRequest(BaseModel):
+    """Backfill comment/category after a bare like/dislike."""
+
+    comment: str | None = None
+    category: str | None = None
+
+
+async def _owned_feedback(adapters: Any, feedback_id: str, user_id: str) -> Feedback:
+    """Fetch a feedback entry, raising 404/403 unless the caller owns it."""
+    fb = await adapters.feedback.get(feedback_id)
+    if fb is None:
+        raise HTTPException(404, "Feedback not found")
+    if fb.user_id != user_id:
+        raise HTTPException(403, "Access denied")
+    return fb
 
 
 @router.get("")
@@ -106,3 +125,40 @@ async def submit_feedback(
         body.session_id,
     )
     return {"feedback_id": saved.feedback_id, "ok": True}
+
+
+@router.put("/{feedback_id}")
+async def update_feedback(
+    request: Request,
+    feedback_id: str,
+    body: FeedbackUpdateRequest,
+    user_id: str = Depends(resolve_request_identity),
+) -> dict[str, Any]:
+    """Backfill comment/category on an existing feedback entry."""
+    adapters = request.app.state.adapters
+    if adapters.feedback is None:
+        raise HTTPException(501, "Feedback storage not configured")
+    fb = await _owned_feedback(adapters, feedback_id, user_id)
+    comment = body.comment if body.comment is not None else fb.comment
+    category = body.category if body.category is not None else fb.category
+    await adapters.feedback.update_content(
+        feedback_id, comment=comment, category=category
+    )
+    logger.info("Feedback updated id=%s user=%s", feedback_id, user_id)
+    return {"feedback_id": feedback_id, "ok": True}
+
+
+@router.delete("/{feedback_id}")
+async def delete_feedback(
+    request: Request,
+    feedback_id: str,
+    user_id: str = Depends(resolve_request_identity),
+) -> dict[str, Any]:
+    """Cancel a like/dislike: delete the feedback entry."""
+    adapters = request.app.state.adapters
+    if adapters.feedback is None:
+        raise HTTPException(501, "Feedback storage not configured")
+    await _owned_feedback(adapters, feedback_id, user_id)
+    await adapters.feedback.delete(feedback_id)
+    logger.info("Feedback deleted id=%s user=%s", feedback_id, user_id)
+    return {"feedback_id": feedback_id, "ok": True}
