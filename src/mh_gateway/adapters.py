@@ -65,9 +65,16 @@ class FeedbackRepository(Protocol):
     async def get(self, feedback_id: str) -> Feedback | None: ...
     async def delete(self, feedback_id: str) -> bool: ...
     async def delete_many(self, feedback_ids: list[str]) -> int: ...
-    async def update_status(
-        self, feedback_id: str, status: str
-    ) -> Feedback | None: ...
+    async def update_status(self, feedback_id: str, status: str) -> Feedback | None: ...
+    async def update_content(
+        self,
+        feedback_id: str,
+        comment: str | None = None,
+        category: str | None = None,
+    ) -> Feedback | None:
+        """Backfill comment/category on an existing feedback entry."""
+        ...
+
     async def list(
         self,
         *,

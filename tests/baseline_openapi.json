@@ -853,6 +853,104 @@
         }
       }
     },
+    "/api/v1/feedback/{feedback_id}": {
+      "put": {
+        "tags": [
+          "feedback"
+        ],
+        "summary": "Update Feedback",
+        "description": "Backfill comment/category on an existing feedback entry.",
+        "operationId": "update_feedback_api_v1_feedback__feedback_id__put",
+        "parameters": [
+          {
+            "name": "feedback_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Feedback Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Update Feedback Api V1 Feedback  Feedback Id  Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "feedback"
+        ],
+        "summary": "Delete Feedback",
+        "description": "Cancel a like/dislike: delete the feedback entry.",
+        "operationId": "delete_feedback_api_v1_feedback__feedback_id__delete",
+        "parameters": [
+          {
+            "name": "feedback_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Feedback Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Feedback Api V1 Feedback  Feedback Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/management/scenarios": {
       "get": {
         "tags": [
@@ -1633,7 +1731,7 @@
           "management"
         ],
         "summary": "List Controllers",
-        "description": "ChatRequest.controller \u53ef\u9009\u7684 Controller \u76ee\u5f55\u3002\n\n\u7531 chat \u8f93\u5165\u6846\u4e0b\u62c9\u83dc\u5355\u6d88\u8d39\u3002default \u662f registry \u7684\u9690\u5f0f\u56de\u9000\uff0c\ngoal / timer \u7531 create_runtime \u6ce8\u518c\uff0c\u9ed8\u8ba4\u53c2\u6570\u6765\u81ea gateway config\u3002",
+        "description": "ChatRequest.controller \u53ef\u9009\u7684 Controller \u76ee\u5f55\uff08\u65e0\u9700\u6743\u9650\uff09\u3002\n\n\u7c7b\u578b\u5217\u8868\u4e0e\u5c55\u793a\u5143\u6570\u636e\u6765\u81ea controller registry \u7684 ``catalog()``\n\uff08``build_controller_registry`` \u6ce8\u518c\u65f6\u4e00\u5e76\u767b\u8bb0\uff0c\u5355\u4e00\u6765\u6e90\uff09\u3002",
         "operationId": "list_controllers_api_v1_management_controllers_get",
         "responses": {
           "200": {
@@ -3738,6 +3836,35 @@
           "feedback_type"
         ],
         "title": "FeedbackCreateRequest"
+      },
+      "FeedbackUpdateRequest": {
+        "properties": {
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          }
+        },
+        "type": "object",
+        "title": "FeedbackUpdateRequest",
+        "description": "Backfill comment/category after a bare like/dislike."
       },
       "HTTPValidationError": {
         "properties": {
