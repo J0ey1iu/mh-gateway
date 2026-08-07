@@ -1,5 +1,11 @@
 # Change Log
 
+## 0.1.1a7
+
+- fix(csv): feedback export prepends a UTF-8 BOM and serves
+  `text/csv; charset=utf-8` so Excel opens Chinese comments correctly
+  (mh-incubator #39).
+
 ## 0.1.1a5
 
 - feat(events): forward `MessageEvent` to the SSE stream (was skipped)
