@@ -59,6 +59,42 @@ class TestManagementAPI:
         )
         assert resp.status_code == 404
 
+    def test_scenario_show_on_homepage_passthrough(self, client, auth_header):
+        resp = client.post(
+            "/api/v1/management/scenarios",
+            headers=auth_header,
+            json={"id": "vis", "name": "Visible", "show_on_homepage": True},
+        )
+        assert resp.status_code == 201, resp.json()
+        assert resp.json()["show_on_homepage"] is True
+
+        resp = client.post(
+            "/api/v1/management/scenarios",
+            headers=auth_header,
+            json={"id": "hid", "name": "Hidden", "show_on_homepage": False},
+        )
+        assert resp.status_code == 201, resp.json()
+        assert resp.json()["show_on_homepage"] is False
+
+        # portal: hidden scene must not appear
+        resp = client.get("/api/v1/portal/scenarios?page_size=0", headers=auth_header)
+        ids = [s["id"] for s in resp.json()["items"]]
+        assert "vis" in ids
+        assert "hid" not in ids
+
+        resp = client.put(
+            "/api/v1/management/scenarios/hid",
+            headers=auth_header,
+            json={"show_on_homepage": True},
+        )
+        assert resp.status_code == 200, resp.json()
+        assert resp.json()["show_on_homepage"] is True
+
+        # once flipped back, the scene reappears on the portal
+        resp = client.get("/api/v1/portal/scenarios?page_size=0", headers=auth_header)
+        ids = [s["id"] for s in resp.json()["items"]]
+        assert "hid" in ids
+
     def test_delete_scenario(self, client, auth_header):
         client.post(
             "/api/v1/management/scenarios",

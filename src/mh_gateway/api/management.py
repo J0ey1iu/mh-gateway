@@ -70,6 +70,7 @@ class ScenarioCreate(BaseModel):
     description: str = ""
     description_locale: str = ""
     agents: list[dict[str, Any]] = []
+    show_on_homepage: bool = True
 
 
 class ScenarioUpdate(BaseModel):
@@ -79,6 +80,7 @@ class ScenarioUpdate(BaseModel):
     description: str | None = None
     description_locale: str | None = None
     agents: list[dict[str, Any]] | None = None
+    show_on_homepage: bool | None = None
 
 
 class AgentCreate(BaseModel):

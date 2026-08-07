@@ -191,6 +191,34 @@ def has_broad_permission(user_permissions: list[str], prefix: str) -> bool:
     return False
 
 
+def enrich_portal_agents(
+    scenario_agents: list[Any],
+    agents_by_name: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Attach agent metadata (name/display_name/description + locale fields) to
+    a scenario's agent list for the portal.
+
+    Shared by providers and test doubles so the portal contract stays in
+    one place; localization happens later in the gateway.
+    """
+    result = []
+    for a in scenario_agents:
+        name = a.get("name") if isinstance(a, dict) else a
+        if not name:
+            continue
+        meta = agents_by_name.get(name) or {}
+        result.append(
+            {
+                "name": name,
+                "display_name": meta.get("display_name", name),
+                "display_name_locale": meta.get("display_name_locale"),
+                "description": meta.get("description", ""),
+                "description_locale": meta.get("description_locale"),
+            }
+        )
+    return result
+
+
 # ── M2M & Outbound ────────────────────────────────────────────────────────────
 
 
@@ -296,6 +324,19 @@ class MetadataRepository(Protocol):
 
     async def get_scenario(self, scenario_id: str) -> dict[str, Any] | None: ...
     async def list_scenarios(self) -> list[dict[str, Any]]: ...
+
+    async def list_portal_scenarios(
+        self, user_perms: list[str] | None, locale: str = ""
+    ) -> list[dict[str, Any]]:
+        """Scenario list for the user-facing portal, permission-annotated.
+
+        The provider owns its permission model: it returns **every**
+        scenario that should appear on the portal homepage (i.e. those
+        with ``show_on_homepage != False``), each carrying an
+        ``accessible`` boolean flag.  The gateway never loops over
+        permissions itself.
+        """
+        ...
 
     # ── Tool CRUD ──
 

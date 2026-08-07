@@ -83,6 +83,7 @@ class _MockMetadata:
             )
         )
         self.list_scenarios = AsyncMock(side_effect=lambda: list(self._scenarios))
+        self.list_portal_scenarios = AsyncMock(side_effect=self._list_portal_scenarios)
         self.list_agents = AsyncMock(side_effect=lambda: list(self._agents))
         self.list_tools = AsyncMock(side_effect=lambda: list(self._tools))
         self.create_scenario = AsyncMock(side_effect=self._create_scenario)
@@ -99,6 +100,32 @@ class _MockMetadata:
         self.add_agent_tool = AsyncMock(return_value={})
         self.remove_agent_tool = AsyncMock(return_value={})
         self.close = AsyncMock()
+
+    async def _list_portal_scenarios(self, user_perms=None, locale=""):
+        from mh_gateway.adapters import (
+            enrich_portal_agents,
+            has_broad_permission,
+            match_permission,
+        )
+
+        result = []
+        agents_by_name = {str(a.get("name")): a for a in self._agents if a.get("name")}
+        for s in self._scenarios:
+            if s.get("show_on_homepage") is False:
+                continue
+            entry = dict(s)
+            if user_perms is None:
+                entry["accessible"] = True
+            else:
+                entry["accessible"] = bool(
+                    has_broad_permission(user_perms, "use:scene")
+                    or match_permission(user_perms, f"use:scene:{s['id']}")
+                )
+            entry["agents"] = enrich_portal_agents(
+                s.get("agents", []), agents_by_name
+            )
+            result.append(entry)
+        return result
 
     async def _create_scenario(self, scenario: dict) -> dict:
         sid = scenario.get("id", "")
