@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+from dataclasses import dataclass, field
+from types import SimpleNamespace
 
 
 @dataclass
@@ -10,6 +12,10 @@ class _FakeSession:
     session_id: str
     user_id: str
     title: str = ""
+    messages: list = field(default_factory=list)
+
+    def get_all_messages(self) -> list:
+        return self.messages
 
 
 class TestSubmitFeedback:
@@ -228,8 +234,6 @@ class TestUpdateDeleteFeedback:
     @staticmethod
     def _seed_feedback(client, user_id):
         """Seed a feedback owned by *user_id* straight into the store."""
-        import asyncio
-
         from mh_gateway.adapters import Feedback
 
         repo = client.app.state.adapters.feedback
@@ -246,8 +250,6 @@ class TestUpdateDeleteFeedback:
 
     @staticmethod
     def _get_feedback(client, feedback_id):
-        import asyncio
-
         return asyncio.run(client.app.state.adapters.feedback.get(feedback_id))
 
     def test_put_backfills_comment_and_category(
@@ -325,6 +327,93 @@ class TestUpdateDeleteFeedback:
         fb_id = self._seed_feedback(client, user_id="2")
         resp = client.delete(f"/api/v1/feedback/{fb_id}", headers=auth_header)
         assert resp.status_code == 403
+
+
+class TestSubmitFeedbackTool:
+    """submit_feedback built-in tool — must enforce session ownership
+    exactly like the HTTP endpoint (POST /api/v1/feedback)."""
+
+    @staticmethod
+    def _call_tool(client, session, user_id="1", type="praise", comment="") -> dict:
+        from mh_gateway.builtin_agents.local_tools import submit_feedback_fn
+        from mh_gateway.context import (
+            clear_current_user_id,
+            reset_current_request,
+            set_current_request,
+            set_current_user_id,
+        )
+
+        adapters = client.app.state.adapters
+        if session is not None:
+            adapters.sessions._sessions[session.session_id] = session
+
+        class _FakeRequest:
+            scope = {"path_params": {"memory_id": "sess-1"}}
+            app = SimpleNamespace(state=SimpleNamespace(adapters=adapters))
+
+        async def _run():
+            t1 = set_current_request(_FakeRequest())
+            set_current_user_id(user_id)
+            try:
+                async for r in submit_feedback_fn(type=type, comment=comment):
+                    return r
+            finally:
+                reset_current_request(t1)
+                clear_current_user_id()
+
+        return asyncio.run(_run())
+
+    def test_tool_saves_praise(self, client_with_feedback):
+        """Owned session + praise → thumbs_up saved with agent_tool source."""
+        session = _FakeSession(session_id="sess-1", user_id="1")
+        out = self._call_tool(
+            client_with_feedback, session, user_id="1", type="praise", comment="很好"
+        )
+        assert out["status"] == "ok", out
+        saved = asyncio.run(
+            client_with_feedback.app.state.adapters.feedback.get(out["feedback_id"])
+        )
+        assert saved.feedback_type == "thumbs_up"
+        assert saved.source == "agent_tool"
+        assert saved.comment == "很好"
+
+    def test_tool_auto_links_to_last_user_message(self, client_with_feedback):
+        """Empty target_id → feedback points at the last user message so the
+        replay page can highlight where the opinion was expressed."""
+        session = _FakeSession(
+            session_id="sess-1",
+            user_id="1",
+            messages=[
+                {"id": "msg-1", "role": "assistant", "content": "ok"},
+                {"id": "msg-2", "role": "user", "content": "你答错了，应该用X"},
+            ],
+        )
+        out = self._call_tool(
+            client_with_feedback,
+            session,
+            user_id="1",
+            type="blame",
+            comment="答错了",
+        )
+        assert out["status"] == "ok", out
+        saved = asyncio.run(
+            client_with_feedback.app.state.adapters.feedback.get(out["feedback_id"])
+        )
+        assert saved.target_type == "message"
+        assert saved.target_id == "msg-2"
+
+    def test_tool_session_not_owned(self, client_with_feedback):
+        """Session owned by another user → refused like the HTTP 403."""
+        session = _FakeSession(session_id="sess-1", user_id="2")
+        out = self._call_tool(client_with_feedback, session, user_id="1", type="blame")
+        assert out["status"] == "error", out
+        assert "Access denied" in out["message"]
+
+    def test_tool_session_not_found(self, client_with_feedback):
+        """Missing session → refused like the HTTP 404."""
+        out = self._call_tool(client_with_feedback, None, user_id="1", type="praise")
+        assert out["status"] == "error", out
+        assert "Session not found" in out["message"]
 
 
 class TestManageFeedback:
