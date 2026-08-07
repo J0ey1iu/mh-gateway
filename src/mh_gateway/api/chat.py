@@ -184,7 +184,7 @@ async def _stream_events(
             agent_metadata_id=agent_name,
             memory_id=memory_id,
             tool_names=tool_names,
-            context={"locale": locale} if locale else None,
+            context={"locale": locale, "user_id": user_id} if locale else {"user_id": user_id},
             controller_type=controller_type,
             controller_config=controller_config,
         )

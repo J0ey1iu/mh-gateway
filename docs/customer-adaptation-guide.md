@@ -356,6 +356,21 @@ class VaultSecretResolver(ConfigProvider):
 
 ---
 
+## 系统提示词装配（可选）
+
+最终发给 LLM 的 system prompt 由三部分装配：agent 原始 prompt、系统注入的
+提示词（平台规则）、用户长期记忆。框架只定义协议，装配逻辑由应用层定制。
+
+- 不启用：零改动（默认行为与旧版本一致）；
+- 启用：实现 `SystemPromptProvider` / `UserPreferenceProvider` /
+  `SystemPromptAssembler` 三个协议（定义于 `minimal_harness.agent.runtime`），
+  在 lifespan 中注入 `GatewayAdapters`。
+
+详细协议签名、接入示例与参考实现见
+[system-prompt-assembly-guide.md](./system-prompt-assembly-guide.md)。
+
+---
+
 ## Per-Request 上下文
 
 Adapter 接口中的方法（如 `MetadataManager.list_agents()`、`PermissionChecker.check()`）默认不接收 HTTP 请求

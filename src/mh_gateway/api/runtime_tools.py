@@ -195,7 +195,7 @@ async def handoff_execute(
                     user_input=[{"type": "text", "text": combined}],
                     agent_metadata_id=target_agent_name,
                     memory_id=handoff_session_id,
-                    context={"locale": locale, "agent_name": target_agent_name},
+                    context={"locale": locale, "user_id": user_id, "agent_name": target_agent_name},
                 )
 
                 yield _sse_line(

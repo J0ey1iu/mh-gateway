@@ -687,6 +687,9 @@ async def create_runtime(
             keep_recent=6,
         ),
         controller_registry=build_controller_registry(adapters.settings),
+        system_prompt_assembler=adapters.system_prompt_assembler,
+        system_prompt_provider=adapters.system_prompt_provider,
+        user_preference_provider=adapters.user_preference_provider,
     )
 
     return runtime, agent_registry, tool_registry, session_store

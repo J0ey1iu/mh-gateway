@@ -1,5 +1,16 @@
 # Change Log
 
+## Unreleased
+
+- feat(prompt): system prompt assembly adapters — `GatewayAdapters` gains
+  optional `system_prompt_assembler` / `system_prompt_provider` /
+  `user_preference_provider` fields (types from
+  `minimal_harness.agent.runtime`); `create_runtime()` passes them through
+  to `AgentRuntime`. Chat run context now carries `user_id` so preference
+  providers can resolve per-user prompts. All fields optional — existing
+  deployments need no change. See
+  `docs/system-prompt-assembly-guide.md` for customer adaptation.
+
 ## 0.1.1a8
 
 - feat(context): propagate full request context to remote tool services
