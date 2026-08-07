@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import contextvars
 import uuid
+from typing import TYPE_CHECKING, Any
 
 from fastapi import Request
+
+if TYPE_CHECKING:
+    from mh_gateway.adapters import UserIdentity
 
 _request_context_var: contextvars.ContextVar[Request | None] = contextvars.ContextVar(
     "current_request", default=None
@@ -11,6 +15,10 @@ _request_context_var: contextvars.ContextVar[Request | None] = contextvars.Conte
 
 _user_id_context_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "current_user_id", default=None
+)
+
+_identity_context_var: contextvars.ContextVar["UserIdentity | None"] = (
+    contextvars.ContextVar("current_identity", default=None)
 )
 
 _trace_id_context_var: contextvars.ContextVar[str] = contextvars.ContextVar(
@@ -97,6 +105,60 @@ def get_current_user_id() -> str | None:
 
 def clear_current_user_id() -> None:
     _user_id_context_var.set(None)
+
+
+# ── Full identity (set after successful auth, see api/auth.py) ───────────────
+
+
+def set_current_identity(
+    identity: "UserIdentity | None",
+) -> contextvars.Token["UserIdentity | None"]:
+    return _identity_context_var.set(identity)
+
+
+def get_current_identity() -> "UserIdentity | None":
+    return _identity_context_var.get()
+
+
+def build_tool_context(
+    *,
+    user_id: str = "",
+    scenario_id: str = "",
+    agent_name: str = "",
+) -> dict[str, Any]:
+    """Assemble the structured context forwarded to remote tool services.
+
+    Reads identity / trace / locale from the per-request contextvars and
+    merges the agent-run context (``correlation_id``) when available.
+    Only non-empty fields are included so the payload stays lean.
+    """
+    ctx: dict[str, Any] = {}
+    if user_id:
+        ctx["user_id"] = user_id
+    identity = get_current_identity()
+    if identity is not None:
+        if identity.username:
+            ctx["username"] = identity.username
+        if identity.roles:
+            ctx["roles"] = identity.roles
+        if identity.extra_data:
+            ctx["extra_data"] = identity.extra_data
+    trace_id = get_current_trace_id()
+    if trace_id:
+        ctx["trace_id"] = trace_id
+    locale = get_current_locale()
+    if locale:
+        ctx["locale"] = locale
+    if scenario_id:
+        ctx["scenario_id"] = scenario_id
+    if agent_name:
+        ctx["agent_name"] = agent_name
+    from minimal_harness.agent.runtime import _current_context
+
+    correlation_id = _current_context.get().get("correlation_id", "")
+    if correlation_id:
+        ctx["correlation_id"] = correlation_id
+    return ctx
 
 
 # ── Trace ID (for distributed tracing / logging) ────────────────────────────────

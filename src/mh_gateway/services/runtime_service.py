@@ -19,6 +19,7 @@ from minimal_harness.tool.registry import ToolRegistry
 from minimal_harness.types import (
     AgentMetadata,
     CompactionSettings,
+    ContextProvider,
     ExternalScriptToolBinding,
     LLMStart,
     LocalToolBinding,
@@ -389,6 +390,29 @@ def _make_extra_headers_provider(
     return _inner
 
 
+def _make_tool_context_provider(
+    identity: str,
+    scenario_id: str,
+    agent_name: str,
+) -> ContextProvider:
+    """Return a closure that assembles the tool request context at execution time.
+
+    Resolves the per-request contextvars (identity, trace, locale) at tool
+    execution time, so the structured context sent in the request body stays
+    in sync with the actual request lifecycle.
+    """
+    from mh_gateway.context import build_tool_context
+
+    async def _inner() -> dict[str, Any]:
+        return build_tool_context(
+            user_id=identity,
+            scenario_id=scenario_id,
+            agent_name=agent_name,
+        )
+
+    return _inner
+
+
 async def _tool_binding(
     meta: dict,
     name: str,
@@ -426,6 +450,11 @@ async def _tool_binding(
             url=url,
             headers={},
             extra_headers_provider=extra_provider,
+            context_provider=_make_tool_context_provider(
+                identity=identity,
+                scenario_id=scenario_id,
+                agent_name=agent_name,
+            ),
             timeout=60.0,
             verify_ssl=verify_agent_tool_ssl,
         )

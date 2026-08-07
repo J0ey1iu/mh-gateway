@@ -1,5 +1,15 @@
 # Change Log
 
+## 0.1.1a8
+
+- feat(context): propagate full request context to remote tool services
+  via the request body (`context` field). New `build_tool_context()`
+  assembles user identity (from the full `UserIdentity` now stored in a
+  contextvar via `set_current_identity`), trace id, locale, scenario /
+  agent names and correlation id; `_tool_binding` wires it as a
+  `context_provider` on every `RemoteToolBinding`. Headers keep carrying
+  credentials; structured context travels in the body.
+
 ## 0.1.1a7
 
 - fix(csv): feedback export prepends a UTF-8 BOM and serves
