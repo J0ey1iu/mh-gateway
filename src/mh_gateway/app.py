@@ -34,6 +34,11 @@ from mh_gateway.adapters import (
     ToolScriptStore,
     UserAuthenticator,
 )
+from minimal_harness.agent.runtime import (
+    SystemPromptAssembler,
+    SystemPromptProvider,
+    UserPreferenceProvider,
+)
 from mh_gateway.api.router import router
 from mh_gateway.api.component_sources import component_sources_router
 from mh_gateway.config import ConfigSchema
@@ -83,6 +88,9 @@ class GatewayAdapters:
     eval_results: EvalResultRepository | None = None
     tool_script_store: ToolScriptStore | None = None
     feedback: FeedbackRepository | None = None
+    system_prompt_assembler: SystemPromptAssembler | None = None
+    system_prompt_provider: SystemPromptProvider | None = None
+    user_preference_provider: UserPreferenceProvider | None = None
 
 
 class AdapterLifespan(Protocol):
