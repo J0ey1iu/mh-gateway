@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from fastapi import HTTPException, Request
 
-from mh_gateway.context import get_current_user_id, set_current_user_id
+from mh_gateway.context import (
+    get_current_user_id,
+    set_current_identity,
+    set_current_user_id,
+)
 
 
 async def get_user_id(request: Request) -> str:
@@ -28,5 +32,6 @@ async def get_user_id(request: Request) -> str:
     if not identity.user_id:
         raise HTTPException(status_code=401, detail="Invalid token payload")
     set_current_user_id(identity.user_id)
+    set_current_identity(identity)
     request.scope["_user_id"] = identity.user_id
     return identity.user_id
