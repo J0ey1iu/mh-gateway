@@ -19,6 +19,9 @@ from minimal_harness.tool.script_parser import parse_tool_script
 
 logger = logging.getLogger("orchestration.management")
 
+# UTF-8 BOM so Excel opens the CSV with correct Chinese encoding.
+_csv_bom = "\ufeff"
+
 router = APIRouter(prefix="/api/v1/management", tags=["management"])
 
 
@@ -1240,8 +1243,9 @@ async def export_feedback(
     adapters = request.app.state.adapters
     if adapters.feedback is None:
         return Response(
-            content="feedback_id,session_id,user_id,feedback_type,source,status,comment,created_at\n",
-            media_type="text/csv",
+            content=_csv_bom
+            + "feedback_id,session_id,user_id,feedback_type,source,status,comment,created_at\n",
+            media_type="text/csv; charset=utf-8",
             headers={"Content-Disposition": "attachment; filename=feedback.csv"},
         )
     items, _ = await adapters.feedback.list(
@@ -1265,7 +1269,7 @@ async def export_feedback(
             f'"{comment}",{fb.created_at}'
         )
     return Response(
-        content="\n".join(lines),
-        media_type="text/csv",
+        content=_csv_bom + "\n".join(lines),
+        media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": "attachment; filename=feedback.csv"},
     )

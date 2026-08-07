@@ -511,6 +511,34 @@ class TestManageFeedback:
         )
         assert resp.status_code == 200
 
+    def test_export_csv_utf8_bom(self, client_with_feedback, auth_header):
+        """CSV export must start with a UTF-8 BOM so Excel renders Chinese correctly."""
+        adapters = client_with_feedback.app.state.adapters
+        adapters.sessions._sessions["sess-1"] = _FakeSession(
+            session_id="sess-1", user_id="1"
+        )
+        client_with_feedback.post(
+            "/api/v1/feedback",
+            headers=auth_header,
+            json={
+                "session_id": "sess-1",
+                "target_type": "message",
+                "target_id": "msg-0",
+                "feedback_type": "thumbs_up",
+                "comment": "准确 有用",
+            },
+        )
+
+        resp = client_with_feedback.get(
+            "/api/v1/management/feedback/export",
+            headers=auth_header,
+        )
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/csv; charset=utf-8")
+        assert resp.content.startswith(b"\xef\xbb\xbf")  # UTF-8 BOM
+        body = resp.content.decode("utf-8-sig")
+        assert "准确 有用" in body
+
 
 class TestFeedbackSessionReplay:
     """GET /api/v1/management/feedback/{id}/session — session replay."""
