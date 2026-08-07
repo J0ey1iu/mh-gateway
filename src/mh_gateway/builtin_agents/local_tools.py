@@ -254,14 +254,32 @@ async def submit_feedback_fn(
 
     from mh_gateway.adapters import Feedback
 
-    # resolve agent_name from the session
-    agent_name = ""
+    # resolve agent_name from the session + ownership check (same as POST /api/v1/feedback)
     try:
         session = await adapters.sessions.get_session(session_id)
-        if session:
-            agent_name = getattr(session, "agent_name", "") or ""
     except Exception:
-        pass
+        session = None
+    if session is None:
+        yield {"status": "error", "message": "Session not found"}
+        return
+    if getattr(session, "user_id", None) != user_id:
+        yield {
+            "status": "error",
+            "message": "Access denied: session does not belong to current user",
+        }
+        return
+    agent_name = getattr(session, "agent_name", "") or ""
+
+    # The agent cannot know the msg-{seq} id of in-flight messages, so when
+    # no target was given, auto-link the feedback to the user message that
+    # carried the opinion — that's what the replay page highlights.
+    if not target_id:
+        msgs = getattr(session, "get_all_messages", lambda: [])() or []
+        for m in reversed(msgs):
+            if m.get("role") == "user" and m.get("id"):
+                target_id = m["id"]
+                target_type = "message"
+                break
 
     feedback = Feedback(
         feedback_id=f"fb_{uuid4().hex[:12]}",
@@ -617,14 +635,20 @@ BUILTIN_TOOL_METADATA: list[dict[str, Any]] = [
             ensure_ascii=False,
         ),
         "description": (
-            "Collect user praise or criticism from the conversation. "
-            "Only call when the user explicitly expresses strong satisfaction "
-            "or dissatisfaction in natural language."
+            "Record user feedback about your previous response. Call when the "
+            "user criticizes or corrects what you just said, or asks you to "
+            "improve/redo it — even if their words are also a new task. You "
+            "MUST record the feedback BEFORE continuing to fix the issue. "
+            "Examples: 'you got it wrong', 'this approach won't work, use X "
+            "instead', 'you should have shown me a demo', 'well done'. Do NOT "
+            "call for neutral or vague statements. target_id is optional — "
+            "leave it empty and the system auto-links the feedback to the "
+            "user's current message."
         ),
         "description_locale": json.dumps(
             {
-                "zh": "从对话中收集用户的表扬或批评意见。仅在用户用自然语言明确表达了强烈不满或大力赞扬时调用。",
-                "en": "Collect user praise or criticism from the conversation. Only call when the user explicitly expresses strong satisfaction or dissatisfaction in natural language.",
+                "zh": "记录用户对您上一条回答的反馈。当用户批评或纠正您刚说的内容，或要求改进/重做时调用——即使他们的话同时也是一条新任务。您必须先记录反馈（type=blame），再继续补救问题。示例：‘你答错了’、‘这个方案不行，改用X’、‘你至少应该给我展示一下吧’、‘回答得很好’。对中性或含糊的表述不要调用。target_id 为可选项——留空时系统会自动关联到用户当前这条消息。",
+                "en": "Record user feedback about your previous response. Call when the user criticizes or corrects what you just said, or asks you to improve/redo it — even if their words are also a new task. You MUST record the feedback BEFORE continuing to fix the issue. Examples: 'you got it wrong', 'this approach won't work, use X instead', 'you should have shown me a demo', 'well done'. Do NOT call for neutral or vague statements. target_id is optional — leave it empty and the system auto-links the feedback to the user's current message.",
             },
             ensure_ascii=False,
         ),
@@ -647,11 +671,11 @@ BUILTIN_TOOL_METADATA: list[dict[str, Any]] = [
                 "target_type": {
                     "type": "string",
                     "enum": ["message", "tool_call"],
-                    "description": "Target entity type",
+                    "description": "Optional. Leave empty to auto-link to the user's current message",
                 },
                 "target_id": {
                     "type": "string",
-                    "description": "Target entity ID",
+                    "description": "Optional. Leave empty to auto-link to the user's current message",
                 },
             },
             "required": ["type"],
