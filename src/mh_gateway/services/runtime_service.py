@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 from collections import defaultdict
-from collections.abc import Awaitable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Sequence
 from typing import Any, Callable
 from urllib.parse import quote
 
@@ -413,6 +414,39 @@ def _make_tool_context_provider(
     return _inner
 
 
+def _resolve_scene_workdir(
+    fn: Callable[..., AsyncIterator[Any]] | None, scenario_data: dict[str, Any] | None
+) -> str | None:
+    """Scene ``cwd`` for local fns that accept an optional ``workdir`` param.
+
+    The capability is self-describing (the fn signature declares ``workdir``),
+    so the orchestrator never special-cases tool names: any local tool whose
+    fn accepts ``workdir`` runs in the current scene's folder by default when
+    the scene carries a ``cwd`` (mh-local: one scene == one folder).
+    """
+    if not scenario_data or fn is None:
+        return None
+    cwd = scenario_data.get("cwd")
+    if not cwd:
+        return None
+    if "workdir" not in inspect.signature(fn).parameters:
+        return None
+    return str(cwd)
+
+
+def _with_scene_workdir(
+    fn: Callable[..., AsyncIterator[Any]], cwd: str
+) -> Callable[..., AsyncIterator[Any]]:
+    """Default workdir for the wrapped fn; explicit args win (setdefault)."""
+
+    async def wrapped(**kwargs: Any) -> AsyncIterator[Any]:
+        kwargs.setdefault("workdir", cwd)
+        async for chunk in fn(**kwargs):
+            yield chunk
+
+    return wrapped
+
+
 async def _tool_binding(
     meta: dict,
     name: str,
@@ -530,6 +564,7 @@ async def create_runtime(
     # ── Resolve scenario data (single lookup, not full scan) ──
     scenario_tool_names: dict[str, set[str]] = defaultdict(set)
     scenario_agent_names: set[str] | None = None
+    scenario_data: dict[str, Any] | None = None
 
     if scenario_id:
         scenario_data = await metadata.get_scenario(scenario_id)
@@ -591,6 +626,14 @@ async def create_runtime(
     for tname, tool_meta in tools_map.items():
         if tool_meta is None:
             continue
+        # Local fns that accept ``workdir`` run in the scene's folder by
+        # default when the scene carries a ``cwd``; explicit args still win.
+        scene_cwd = _resolve_scene_workdir(tool_meta.get("_fn"), scenario_data)
+        if scene_cwd:
+            tool_meta = {
+                **tool_meta,
+                "_fn": _with_scene_workdir(tool_meta["_fn"], scene_cwd),
+            }
         params = tool_meta.get("parameters", {"type": "object", "properties": {}})
         await tool_registry.register(
             ToolMetadata(
