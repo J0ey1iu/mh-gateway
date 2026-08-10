@@ -789,7 +789,7 @@ def build_controller_registry(settings: ConfigSchema) -> ControllerRegistry:
         metadata={
             "display_name": "Timer",
             "display_name_zh": "计时模式",
-            "description": "在指定时长内持续工作，时间到自动停止。",
+            "description": "设置最少工作时间；满足最少时间且任务完成后才会停止。",
             "settings": [
                 {
                     "key": "duration",
