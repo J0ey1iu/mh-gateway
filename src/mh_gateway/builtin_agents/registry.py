@@ -1,9 +1,52 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any, AsyncIterator
 
 from mh_gateway.context import get_current_request, get_current_user_id
+from minimal_harness.types import ToolResult
+
+# Throttle for forwarding the sub-agent's streamed LLM content as
+# ``llm_generating`` chunks: emit at most one chunk per N chars so long
+# responses stay bounded (the frontend collapses consecutive chunks).
+LLM_STREAM_INTERVAL = 200
+# Cap on a single forwarded tool result / agent response inside a chunk.
+TOOL_RESULT_LIMIT = 2000
+
+
+def _short_result(result: Any, limit: int = TOOL_RESULT_LIMIT) -> str:
+    """Flatten a sub-agent tool result to a bounded string for display."""
+    if isinstance(result, ToolResult):
+        result = result.content
+    if isinstance(result, Exception):
+        return f"[Error] {result}"
+    if isinstance(result, str):
+        return result[:limit]
+    return json.dumps(result, ensure_ascii=False, default=str)[:limit]
+
+
+def _tool_call_name(tool_call: Any) -> str:
+    if not isinstance(tool_call, dict):
+        return ""
+    fn = tool_call.get("function")
+    return fn.get("name", "") if isinstance(fn, dict) else ""
+
+
+def _tool_call_args(tool_call: Any) -> str:
+    if not isinstance(tool_call, dict):
+        return ""
+    fn = tool_call.get("function")
+    return fn.get("arguments", "") if isinstance(fn, dict) else ""
+
+
+def _tool_call_id(tool_call: Any) -> str:
+    """Stable per-call id so the frontend can group start/progress/end of the
+    same tool invocation — even when multiple tools run in parallel and their
+    events interleave."""
+    if not isinstance(tool_call, dict):
+        return ""
+    return str(tool_call.get("id", "") or "")
 
 
 async def _discover_agents_fn(
@@ -93,6 +136,8 @@ async def _handoff_fn(
     sub_task = None
     sub_stop_event = None
     result_text = ""
+    llm_buf: list[str] = []
+    llm_emitted = 0
     try:
         runtime, _agent_registry, _tool_registry, _ = await create_runtime(
             request=request,
@@ -134,17 +179,125 @@ async def _handoff_fn(
 
             from minimal_harness.types import (
                 AgentEnd,
+                AgentStart,
+                ExecutionEnd,
+                ExecutionStart,
+                LLMChunk,
+                LLMEnd,
+                LLMStart,
+                ToolEnd,
                 ToolProgress,
+                ToolStart,
             )
 
             if isinstance(event, AgentEnd):
                 result_text = event.response or result_text
+                yield {
+                    "status": "progress",
+                    "type": "agent_end",
+                    "message": (event.response or "")[:TOOL_RESULT_LIMIT],
+                    "time_taken": event.time_taken,
+                    "exceeded": event.exceeded,
+                    "interrupted": event.interrupted,
+                    "error": event.error,
+                }
+            elif isinstance(event, AgentStart):
+                yield {"status": "progress", "type": "agent_start"}
+            elif isinstance(event, LLMStart):
+                yield {
+                    "status": "progress",
+                    "type": "llm_start",
+                    "tool_count": len(event.tools) if event.tools else 0,
+                    "message_count": len(event.messages) if event.messages else 0,
+                }
+            elif isinstance(event, LLMChunk):
+                content = event.chunk.content if event.chunk else None
+                if content:
+                    llm_buf.append(content)
+                    if len(llm_buf) - llm_emitted >= LLM_STREAM_INTERVAL:
+                        yield {
+                            "status": "progress",
+                            "type": "llm_generating",
+                            "content": "".join(llm_buf),
+                            "char_count": len(llm_buf),
+                        }
+                        llm_emitted = len(llm_buf)
+            elif isinstance(event, LLMEnd):
+                if llm_buf and len(llm_buf) > llm_emitted:
+                    yield {
+                        "status": "progress",
+                        "type": "llm_generating",
+                        "content": "".join(llm_buf),
+                        "char_count": len(llm_buf),
+                    }
+                llm_buf = []
+                llm_emitted = 0
+                yield {
+                    "status": "progress",
+                    "type": "llm_end",
+                    "tool_calls": [
+                        tc["function"].get("name", "")
+                        for tc in (event.tool_calls or [])
+                        if isinstance(tc, dict) and isinstance(tc.get("function"), dict)
+                    ],
+                    "usage": event.usage,
+                }
+            elif isinstance(event, ExecutionStart):
+                yield {
+                    "status": "progress",
+                    "type": "execution_start",
+                    "tools": [
+                        {
+                            "name": tc["function"].get("name", ""),
+                            "args": tc["function"].get("arguments", ""),
+                        }
+                        for tc in (event.tool_calls or [])
+                        if isinstance(tc, dict) and isinstance(tc.get("function"), dict)
+                    ],
+                }
+            elif isinstance(event, ToolStart):
+                yield {
+                    "status": "progress",
+                    "type": "tool_start",
+                    "tool_name": _tool_call_name(event.tool_call),
+                    "tool_args": _tool_call_args(event.tool_call),
+                    "tool_call_id": _tool_call_id(event.tool_call),
+                }
             elif isinstance(event, ToolProgress):
                 yield {
                     "status": "progress",
                     "type": "tool_progress",
                     "tool_call": event.tool_call,
                     "chunk": event.chunk,
+                }
+            elif isinstance(event, ToolEnd):
+                is_error = (
+                    isinstance(event.result, Exception)
+                    or (
+                        isinstance(event.result, dict)
+                        and event.result.get("status") == "error"
+                    )
+                    or (
+                        isinstance(event.result, str)
+                        and event.result.startswith("[Error]")
+                    )
+                )
+                yield {
+                    "status": "progress",
+                    "type": "tool_end",
+                    "tool_name": _tool_call_name(event.tool_call),
+                    "tool_result": _short_result(event.result),
+                    "is_error": is_error,
+                    "tool_call_id": _tool_call_id(event.tool_call),
+                }
+            elif isinstance(event, ExecutionEnd):
+                yield {
+                    "status": "progress",
+                    "type": "execution_end",
+                    "results": [
+                        {"name": _tool_call_name(tc), "result": _short_result(r)}
+                        for tc, r in (event.results or [])
+                    ],
                 }
 
         if result_text:
