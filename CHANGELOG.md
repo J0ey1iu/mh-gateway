@@ -1,5 +1,23 @@
 # Change Log
 
+## 0.1.2a1
+
+- feat(metrics): full paginated rankings, daily trend, display-name
+  enrichment — `MetricsRepository` protocol gains `query_ranking`
+  (server-side pagination; external backends push down LIMIT/OFFSET)
+  and `query_trend` (zero-filled daily series); the summary loses its
+  unused top-N lists. New `GET /api/v1/management/metrics/rankings`
+  and `/metrics/trend` endpoints; read-time display-name resolution
+  from metadata (scenes / agents / tools, locale-aware, storage
+  records untouched); extended scalars (error_rate, avg tokens/call,
+  active users, sessions, tool call/error counts).
+- fix: `discover_agents` only lists the current scenario's agents —
+  agent discovery now filters by the active scenario and the caller's
+  `use:agent` permissions, matching the endpoint behaviour
+  (mh-incubator #47).
+- chore: pin `minimal-harness>=0.8.1a1` (lockstep pre-release
+  alignment with the 0.8.1a1 publish set).
+
 ## 0.1.1
 
 - feat(controller): `GoalController` / `TimerController` now live in
