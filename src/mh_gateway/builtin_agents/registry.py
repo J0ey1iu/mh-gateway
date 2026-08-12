@@ -50,7 +50,7 @@ def _tool_call_id(tool_call: Any) -> str:
 
 
 async def _discover_agents_fn(
-    exclude: str = "", locale: str = ""
+    exclude: str = "", locale: str = "", scenario_id: str = ""
 ) -> AsyncIterator[Any]:
     from mh_gateway.api.locale import (
         resolve_description,
@@ -70,12 +70,31 @@ async def _discover_agents_fn(
     if adapters.authorization is not None:
         user_perms = await adapters.authorization.get_permissions(identity)
 
+    # 当前场景下的 agent 集合（再按用户权限过滤）；``scenario_id`` 为空时
+    # 只按权限过滤 —— 与 ``runtime_tools`` 的 HTTP 端点行为保持一致。
+    scenario_agent_names: set[str] | None = None
+    if scenario_id:
+        scenario_data = await adapters.metadata.get_scenario(scenario_id)
+        if scenario_data is not None:
+            scenario_agent_names = {a["name"] for a in scenario_data.get("agents", [])}
+            if user_perms is not None:
+                scenario_agent_names = {
+                    n
+                    for n in scenario_agent_names
+                    if match_permission(user_perms, f"use:agent:{n}")
+                }
+        else:
+            scenario_agent_names = set()
+
     result = []
     for a in agents:
         name = a["name"]
         if exclude and name == exclude:
             continue
-        if user_perms is not None and not match_permission(
+        if scenario_agent_names is not None:
+            if name not in scenario_agent_names:
+                continue
+        elif user_perms is not None and not match_permission(
             user_perms, f"use:agent:{name}"
         ):
             continue
