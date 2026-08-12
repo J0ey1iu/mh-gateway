@@ -3193,6 +3193,202 @@
         }
       }
     },
+    "/api/v1/management/metrics/rankings": {
+      "get": {
+        "tags": [
+          "management"
+        ],
+        "summary": "Get Metrics Rankings",
+        "operationId": "get_metrics_rankings_api_v1_management_metrics_rankings_get",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Ranking kind: scenes|agents|tools|users",
+              "title": "Kind"
+            },
+            "description": "Ranking kind: scenes|agents|tools|users"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "1-based page number",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "1-based page number"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Items per page",
+              "default": 10,
+              "title": "Page Size"
+            },
+            "description": "Items per page"
+          },
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start date (inclusive, YYYY-MM-DD)",
+              "title": "Date From"
+            },
+            "description": "Start date (inclusive, YYYY-MM-DD)"
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End date (inclusive, YYYY-MM-DD)",
+              "title": "Date To"
+            },
+            "description": "End date (inclusive, YYYY-MM-DD)"
+          },
+          {
+            "name": "Accept-Language",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Accept-Language"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Metrics Rankings Api V1 Management Metrics Rankings Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/management/metrics/trend": {
+      "get": {
+        "tags": [
+          "management"
+        ],
+        "summary": "Get Metrics Trend",
+        "operationId": "get_metrics_trend_api_v1_management_metrics_trend_get",
+        "parameters": [
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start date (inclusive, YYYY-MM-DD)",
+              "title": "Date From"
+            },
+            "description": "Start date (inclusive, YYYY-MM-DD)"
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End date (inclusive, YYYY-MM-DD)",
+              "title": "Date To"
+            },
+            "description": "End date (inclusive, YYYY-MM-DD)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Metrics Trend Api V1 Management Metrics Trend Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/portal/scenarios": {
       "get": {
         "tags": [
@@ -4173,6 +4369,11 @@
             "type": "array",
             "title": "Agents",
             "default": []
+          },
+          "show_on_homepage": {
+            "type": "boolean",
+            "title": "Show On Homepage",
+            "default": true
           }
         },
         "type": "object",
@@ -4253,6 +4454,17 @@
               }
             ],
             "title": "Agents"
+          },
+          "show_on_homepage": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Show On Homepage"
           }
         },
         "type": "object",
