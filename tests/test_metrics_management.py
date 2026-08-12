@@ -25,6 +25,7 @@ from mh_gateway.metrics_repo import (
     LLMCallRecord,
     MetricsSummary,
     ToolCallRecord,
+    get_metrics_repo,
     set_metrics_repo,
 )
 from mh_gateway.services.metrics_middleware import MetricsPersistenceMiddleware
@@ -47,8 +48,8 @@ class TestAggregation:
         s = await repo.query_summary()
         assert s.llm_call_count == 0
         assert s.total_tokens == 0
-        assert s.top_scenes == []
         assert s.model_perf == []
+        assert (await repo.query_ranking("scenes")).total == 0
 
     @pytest.mark.asyncio
     async def test_counts_and_top_n(self):
@@ -88,14 +89,17 @@ class TestAggregation:
         assert s.completion_tokens == 30
         assert s.total_tokens == 90
         assert s.avg_duration_ms == 100.0
-        # scene-0 (i%2==0 → 3), scene-1 (3)
-        assert [t["name"] for t in s.top_scenes][:2] == ["scene-0", "scene-1"]
-        # agents: agent-0 ×2, agent-1 ×2, agent-2 ×2 → all tie, sorted by name
-        assert len(s.top_agents) == 3
-        # tools: tool-0 ×2, tool-1 ×2, tool-2 ×2
-        assert len(s.top_tools) == 3
-        assert [t["name"] for t in s.top_tools] == ["tool-0", "tool-1", "tool-2"]
-        assert s.top_users == [{"name": "u1", "count": 6}]
+        # rankings are full lists via query_ranking (no top-N truncation)
+        scenes = await repo.query_ranking("scenes")
+        assert scenes.total == 2
+        assert [i.key for i in scenes.items] == ["scene-0", "scene-1"]
+        agents = await repo.query_ranking("agents")
+        assert agents.total == 3
+        assert [i.key for i in agents.items] == ["agent-0", "agent-1", "agent-2"]
+        tools = await repo.query_ranking("tools")
+        assert [i.key for i in tools.items] == ["tool-0", "tool-1", "tool-2"]
+        users = await repo.query_ranking("users")
+        assert [i.key for i in users.items] == ["u1"]
         assert s.model_perf[0]["provider"] == "openai"
         assert s.model_perf[0]["model"] == "gpt-4"
         assert s.model_perf[0]["call_count"] == 6
@@ -163,6 +167,154 @@ class TestAggregation:
         assert s.llm_call_count == 1
         assert s.error_count == 1
 
+    @pytest.mark.asyncio
+    async def test_summary_extended_scalars(self):
+        repo = InMemoryMetricsRepository()
+        await repo.record_llm_call(
+            LLMCallRecord(
+                ts="2024-06-01T10:00:00Z",
+                user_id="u1",
+                session_id="s1",
+                agent_name="a1",
+                scenario_id="sc1",
+                provider="p",
+                model="m",
+                prompt_tokens=10,
+                completion_tokens=5,
+                duration_ms=100.0,
+                status="error",
+            )
+        )
+        await repo.record_tool_call(
+            ToolCallRecord(
+                ts="2024-06-01T10:00:00Z",
+                user_id="u1",
+                session_id="s1",
+                agent_name="a1",
+                scenario_id="sc1",
+                tool_name="t1",
+                status="error",
+            )
+        )
+        s = await repo.query_summary()
+        assert s.error_rate == 1.0
+        assert s.avg_tokens_per_call == 15.0
+        assert s.active_user_count == 1
+        assert s.session_count == 1
+        assert s.avg_calls_per_session == 1.0
+        assert s.tool_call_count == 1
+        assert s.tool_error_count == 1
+
+    @pytest.mark.asyncio
+    async def test_ranking_paginated_and_stats(self):
+        repo = InMemoryMetricsRepository()
+        for i in range(25):
+            await repo.record_llm_call(
+                LLMCallRecord(
+                    ts="2024-06-01T10:00:00Z",
+                    user_id="u1",
+                    session_id="s1",
+                    agent_name="a1",
+                    scenario_id=f"scene-{i}",
+                    provider="p",
+                    model="m",
+                    prompt_tokens=1,
+                    completion_tokens=1,
+                    duration_ms=10.0,
+                    status="ok",
+                )
+            )
+        p1 = await repo.query_ranking("scenes", page=1, page_size=10)
+        assert p1.total == 25
+        assert len(p1.items) == 10
+        # all tied at 1 → lexicographic key order
+        assert p1.items[0].key == "scene-0"
+        p3 = await repo.query_ranking("scenes", page=3, page_size=10)
+        assert len(p3.items) == 5
+        with pytest.raises(ValueError):
+            await repo.query_ranking("bogus")
+
+    @pytest.mark.asyncio
+    async def test_ranking_tool_errors(self):
+        repo = InMemoryMetricsRepository()
+        for status in ("ok", "ok", "error"):
+            await repo.record_tool_call(
+                ToolCallRecord(
+                    ts="2024-06-01T10:00:00Z",
+                    user_id="u1",
+                    session_id="s1",
+                    agent_name="a1",
+                    scenario_id="sc1",
+                    tool_name="calc",
+                    status=status,
+                )
+            )
+        page = await repo.query_ranking("tools")
+        assert page.total == 1
+        item = page.items[0]
+        assert item.key == "calc"
+        assert item.count == 3
+        assert item.error_count == 1
+        assert item.error_rate == pytest.approx(1 / 3)
+
+    @pytest.mark.asyncio
+    async def test_trend_zero_filled_and_aggregated(self):
+        repo = InMemoryMetricsRepository()
+        await repo.record_llm_call(
+            LLMCallRecord(
+                ts="2024-06-01T09:00:00Z",
+                user_id="u1",
+                session_id="s1",
+                agent_name="a1",
+                scenario_id="sc1",
+                provider="p",
+                model="m",
+                prompt_tokens=10,
+                completion_tokens=5,
+                duration_ms=100.0,
+                status="ok",
+            )
+        )
+        await repo.record_llm_call(
+            LLMCallRecord(
+                ts="2024-06-03T09:00:00Z",
+                user_id="u2",
+                session_id="s2",
+                agent_name="a1",
+                scenario_id="sc1",
+                provider="p",
+                model="m",
+                prompt_tokens=1,
+                completion_tokens=1,
+                duration_ms=50.0,
+                status="error",
+            )
+        )
+        await repo.record_tool_call(
+            ToolCallRecord(
+                ts="2024-06-01T09:00:00Z",
+                user_id="u1",
+                session_id="s1",
+                agent_name="a1",
+                scenario_id="sc1",
+                tool_name="t1",
+                status="ok",
+            )
+        )
+        points = await repo.query_trend(date_from="2024-06-01", date_to="2024-06-03")
+        assert [p.date for p in points] == ["2024-06-01", "2024-06-02", "2024-06-03"]
+        assert points[0].llm_calls == 1
+        assert points[0].total_tokens == 15
+        assert points[0].tool_calls == 1
+        assert points[0].active_users == 1
+        assert points[1].llm_calls == 0  # zero-filled
+        assert points[2].llm_calls == 1
+        assert points[2].error_count == 1
+        assert points[2].active_users == 1
+        # no range → derived from data
+        derived = await repo.query_trend()
+        assert [p.date for p in derived] == ["2024-06-01", "2024-06-02", "2024-06-03"]
+
 
 class TestMetricsPersistenceMiddleware:
     @pytest.mark.asyncio
@@ -209,9 +361,9 @@ class TestMetricsPersistenceMiddleware:
             assert s.llm_call_count == 1
             assert s.prompt_tokens == 10
             assert s.completion_tokens == 5
-            assert s.top_agents == [{"name": "a1", "count": 1}]
-            assert s.top_scenes == [{"name": "sc1", "count": 1}]
-            assert s.top_users == [{"name": "u1", "count": 1}]
+            assert (await repo.query_ranking("agents")).items[0].key == "a1"
+            assert (await repo.query_ranking("scenes")).items[0].key == "sc1"
+            assert (await repo.query_ranking("users")).items[0].key == "u1"
             assert s.model_perf[0]["model"] == "gpt-4"
         finally:
             set_metrics_repo(None)
@@ -225,8 +377,9 @@ class TestMetricsPersistenceMiddleware:
             tool_call = {"function": {"name": "calculator", "arguments": "{}"}}
             await mw.on_tool_start(tool_call)
             await mw.on_tool_end(tool_call, "ok")
-            s = await repo.query_summary()
-            assert s.top_tools == [{"name": "calculator", "count": 1}]
+            page = await repo.query_ranking("tools")
+            assert page.total == 1
+            assert page.items[0].key == "calculator"
         finally:
             set_metrics_repo(None)
 
@@ -253,7 +406,7 @@ class _DenyMetricsProvider:
         return None
 
 
-def _make_app(provider, lifespan_hooks=None):
+def _make_app(provider, lifespan_hooks=None, metadata=None):
     settings = ConfigSchema(
         db_path="./metrics-test.db",
         cors_origins=[],
@@ -269,7 +422,7 @@ def _make_app(provider, lifespan_hooks=None):
             authorization=provider,
             m2m_auth=provider,
             outbound_auth=provider,
-            metadata=_MockMetadata(),
+            metadata=metadata or _MockMetadata(),
             llm=_MockLLM(),
             sessions=_MockSessionRepo(),
             eval_results=None,
@@ -376,10 +529,6 @@ class TestManagementMetricsAPI:
         assert data["llm_call_count"] == 1
         assert data["total_tokens"] == 15
         assert data["avg_duration_ms"] == 120.0
-        assert data["top_agents"] == [{"name": "triage", "count": 1}]
-        assert data["top_scenes"] == [{"name": "code_review", "count": 1}]
-        assert data["top_tools"] == [{"name": "calculator", "count": 1}]
-        assert data["top_users"] == [{"name": "u1", "count": 1}]
         assert data["model_perf"][0]["model"] == "gpt-4"
         # conftest seeds 2 scenarios
         assert data["entity_counts"]["scenes"] == 2
@@ -401,6 +550,232 @@ class TestManagementMetricsAPI:
             headers={"X-User-Id": "1"},
         )
         assert r.status_code == 422
+
+    # ── rankings endpoint ──
+
+    def test_rankings_paginated_and_display_names(self, seeded_client):
+        r = seeded_client.get(
+            "/api/v1/management/metrics/rankings",
+            params={"kind": "scenes", "page": 1, "page_size": 10},
+            headers={"X-User-Id": "1"},
+        )
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data["total"] == 1
+        assert data["page"] == 1
+        assert data["page_size"] == 10
+        # raw key kept + display name resolved from scenario metadata
+        assert data["items"][0]["name"] == "code_review"
+        assert data["items"][0]["display_name"] == "Code Review"
+
+    def test_rankings_full_ranking_across_pages(self, metrics_client):
+        repo = get_metrics_repo()
+        for i in range(25):
+            asyncio.run(
+                repo.record_llm_call(
+                    LLMCallRecord(
+                        ts="2024-06-01T10:00:00Z",
+                        user_id="u1",
+                        session_id="s1",
+                        agent_name="a1",
+                        scenario_id=f"scene-{i}",
+                        provider="p",
+                        model="m",
+                        prompt_tokens=1,
+                        completion_tokens=1,
+                        duration_ms=10.0,
+                        status="ok",
+                    )
+                )
+            )
+        r = metrics_client.get(
+            "/api/v1/management/metrics/rankings",
+            params={"kind": "scenes", "page": 2, "page_size": 10},
+            headers={"X-User-Id": "1"},
+        )
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data["total"] == 25
+        assert len(data["items"]) == 10
+        # all tied at count 1 → ordered by key ascending (lexicographic)
+        assert data["items"][0]["name"] == "scene-18"
+        # unknown scenario → display_name falls back to raw key
+        assert data["items"][0]["display_name"] == "scene-18"
+        r3 = metrics_client.get(
+            "/api/v1/management/metrics/rankings",
+            params={"kind": "scenes", "page": 3, "page_size": 10},
+            headers={"X-User-Id": "1"},
+        )
+        assert len(r3.json()["items"]) == 5
+
+    def test_rankings_agent_tool_display_names(self, metrics_client):
+        repo = get_metrics_repo()
+        asyncio.run(
+            repo.record_llm_call(
+                LLMCallRecord(
+                    ts="2024-06-01T10:00:00Z",
+                    user_id="u1",
+                    session_id="s1",
+                    agent_name="triage",
+                    scenario_id="code_review",
+                    provider="p",
+                    model="m",
+                    prompt_tokens=1,
+                    completion_tokens=1,
+                    duration_ms=100.0,
+                    status="ok",
+                )
+            )
+        )
+        asyncio.run(
+            repo.record_tool_call(
+                ToolCallRecord(
+                    ts="2024-06-01T10:00:00Z",
+                    user_id="u1",
+                    session_id="s1",
+                    agent_name="triage",
+                    scenario_id="code_review",
+                    tool_name="calculator",
+                    status="ok",
+                )
+            )
+        )
+        metadata = _MockMetadata()
+        asyncio.run(
+            metadata.create_agent(
+                {
+                    "name": "triage",
+                    "display_name": "Triage",
+                    "display_name_locale": '{"zh":"分诊助手"}',
+                    "provider": "openai",
+                    "model": "m",
+                    "agent_type": "simple",
+                    "system_prompt": "",
+                }
+            )
+        )
+        asyncio.run(
+            metadata.create_tool(
+                {
+                    "name": "calculator",
+                    "display_name": "Calculator",
+                    "display_name_locale": '{"zh":"计算器"}',
+                    "description": "",
+                    "parameters": {},
+                }
+            )
+        )
+        app = _make_app(_MockProvider(), lifespan_hooks=[_metrics_hook(repo)], metadata=metadata)
+        with TestClient(app, raise_server_exceptions=False) as c:
+            # zh locale via Accept-Language
+            r = c.get(
+                "/api/v1/management/metrics/rankings",
+                params={"kind": "agents"},
+                headers={"X-User-Id": "1", "Accept-Language": "zh"},
+            )
+            assert r.status_code == 200, r.text
+            assert r.json()["items"][0]["display_name"] == "分诊助手"
+            r = c.get(
+                "/api/v1/management/metrics/rankings",
+                params={"kind": "tools"},
+                headers={"X-User-Id": "1", "Accept-Language": "zh"},
+            )
+            assert r.json()["items"][0]["display_name"] == "计算器"
+
+    def test_rankings_error_rate_and_duration(self, metrics_client):
+        repo = get_metrics_repo()
+        for status in ("ok", "error"):
+            asyncio.run(
+                repo.record_llm_call(
+                    LLMCallRecord(
+                        ts="2024-06-01T10:00:00Z",
+                        user_id="u1",
+                        session_id="s1",
+                        agent_name="triage",
+                        scenario_id="code_review",
+                        provider="p",
+                        model="m",
+                        prompt_tokens=1,
+                        completion_tokens=1,
+                        duration_ms=200.0 if status == "ok" else 100.0,
+                        status=status,
+                    )
+                )
+            )
+        r = metrics_client.get(
+            "/api/v1/management/metrics/rankings",
+            params={"kind": "scenes"},
+            headers={"X-User-Id": "1"},
+        )
+        assert r.status_code == 200, r.text
+        item = r.json()["items"][0]
+        assert item["count"] == 2
+        assert item["error_count"] == 1
+        assert item["error_rate"] == 0.5
+        assert item["avg_duration_ms"] == 150.0
+        assert item["p50_ms"] in (100.0, 200.0)
+        assert item["p95_ms"] == 200.0
+
+    def test_rankings_invalid_kind_returns_422(self, metrics_client):
+        r = metrics_client.get(
+            "/api/v1/management/metrics/rankings",
+            params={"kind": "bogus"},
+            headers={"X-User-Id": "1"},
+        )
+        assert r.status_code == 422
+
+    def test_rankings_403_without_permission(self):
+        app = _make_app(_DenyMetricsProvider())
+        with TestClient(app, raise_server_exceptions=False) as c:
+            r = c.get(
+                "/api/v1/management/metrics/rankings",
+                params={"kind": "scenes"},
+                headers={"X-User-Id": "2"},
+            )
+            assert r.status_code == 403
+
+    def test_rankings_503_without_repo(self):
+        app = _make_app(_MockProvider())
+        with TestClient(app, raise_server_exceptions=False) as c:
+            r = c.get(
+                "/api/v1/management/metrics/rankings",
+                params={"kind": "scenes"},
+                headers={"X-User-Id": "1"},
+            )
+            assert r.status_code == 503
+
+    # ── trend endpoint ──
+
+    def test_trend_zero_filled_days(self, seeded_client):
+        r = seeded_client.get(
+            "/api/v1/management/metrics/trend",
+            params={"date_from": "2024-06-01", "date_to": "2024-06-03"},
+            headers={"X-User-Id": "1"},
+        )
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert [p["date"] for p in data["points"]] == [
+            "2024-06-01",
+            "2024-06-02",
+            "2024-06-03",
+        ]
+        p0 = data["points"][0]
+        assert p0["llm_calls"] == 1
+        assert p0["tool_calls"] == 1
+        assert p0["total_tokens"] == 15
+        assert p0["active_users"] == 1
+        assert p0["active_sessions"] == 1
+        # empty day is zero-filled
+        assert data["points"][1]["llm_calls"] == 0
+
+    def test_trend_403_without_permission(self):
+        app = _make_app(_DenyMetricsProvider())
+        with TestClient(app, raise_server_exceptions=False) as c:
+            r = c.get(
+                "/api/v1/management/metrics/trend",
+                headers={"X-User-Id": "2"},
+            )
+            assert r.status_code == 403
 
 
 class TestEndToEndMiddlewareToAPI:
@@ -445,7 +820,7 @@ class TestEndToEndMiddlewareToAPI:
             s: MetricsSummary = await repo.query_summary()
             assert s.llm_call_count == 1
             assert s.total_tokens == 28
-            assert s.top_tools == [{"name": "calculator", "count": 1}]
+            assert (await repo.query_ranking("tools")).items[0].key == "calculator"
         finally:
             set_metrics_repo(None)
 
@@ -624,8 +999,8 @@ class TestEndToEndChatToAPI:
         summary = _asyncio_run(repo.query_summary())
         assert summary.llm_call_count == 1
         assert summary.total_tokens == 15
-        assert summary.top_agents == [{"name": "triage", "count": 1}]
-        assert summary.top_users == [{"name": "1", "count": 1}]
+        assert _asyncio_run(repo.query_ranking("agents")).items[0].key == "triage"
+        assert _asyncio_run(repo.query_ranking("users")).items[0].key == "1"
 
         # and the management API must return the same aggregation
         r = client.get(
