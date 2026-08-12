@@ -447,6 +447,26 @@ def _with_scene_workdir(
     return wrapped
 
 
+def _with_scenario_id(
+    fn: Callable[..., AsyncIterator[Any]] | None,
+    scenario_id: str,
+) -> Callable[..., AsyncIterator[Any]] | None:
+    """Inject ``scenario_id`` into ``discover_agents`` so the tool only lists
+    the current scenario's agents. Explicit args win (setdefault); no-op when
+    there is no local fn or no scenario. The remote endpoint path carries the
+    same value in its URL query instead (see the ``endpoint_url`` branch of
+    :func:`_tool_binding`)."""
+    if fn is None or not scenario_id:
+        return fn
+
+    async def wrapped(**kwargs: Any) -> AsyncIterator[Any]:
+        kwargs.setdefault("scenario_id", scenario_id)
+        async for chunk in fn(**kwargs):
+            yield chunk
+
+    return wrapped
+
+
 async def _tool_binding(
     meta: dict,
     name: str,
@@ -633,6 +653,14 @@ async def create_runtime(
             tool_meta = {
                 **tool_meta,
                 "_fn": _with_scene_workdir(tool_meta["_fn"], scene_cwd),
+            }
+        # ``discover_agents`` only lists the current scenario's agents: inject
+        # ``scenario_id`` into the local fn. Remote bindings already receive
+        # it as a URL query param (see ``_tool_binding``).
+        if tname == "discover_agents":
+            tool_meta = {
+                **tool_meta,
+                "_fn": _with_scenario_id(tool_meta.get("_fn"), scenario_id),
             }
         params = tool_meta.get("parameters", {"type": "object", "properties": {}})
         await tool_registry.register(
