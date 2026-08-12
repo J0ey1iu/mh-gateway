@@ -2,7 +2,7 @@
 
 核心网关服务，依赖 [minimal-harness](https://github.com/J0ey1iu/minimal-harness) SDK。负责场景加载、用户权限校验、事件流归集，协调前端与各 worker 服务的通信。
 
-- 版本：**0.1.0**
+- 版本：**0.1.1**
 
 - 端口：`8005`
 - Swagger：`http://localhost:8005/docs`
@@ -130,7 +130,9 @@ agents = await adapters.management_provider.list_agents()
 | `/api/v1/agents` | GET | Agent 列表（按权限过滤，支持 `?scenario=` 过滤） |
 | `/api/v1/tools` | GET | Tool 列表（按权限过滤） |
 | `/api/v1/auth/logout` | POST | 用户登出（清除认证态） |
-| `/health` | GET | 健康检查（始终返回 `{"status":"ok"}`） |
+| `/api/v1/feedback` | GET/POST | 反馈列表（按 session 过滤）/ 提交用户反馈（自动关联 session/target 消息） |
+| `/api/v1/feedback/{id}` | PUT/DELETE | 更新/删除反馈内容 |
+| `/api/v1/health` | GET | 健康检查（始终返回 `{"status":"ok"}`） |
 | `/ready` | GET | 就绪检查（检查数据库连接） |
 | `/api/v1/metrics` | GET | 运行时指标快照（仅 `metrics_enabled=true` 时可用） |
 
@@ -149,6 +151,7 @@ agents = await adapters.management_provider.list_agents()
 | `/api/v1/management/tools/upload` | POST | 上传单个 `.py` 工具脚本（multipart `file`），自动解析 `TOOL_NAME` / `TOOL_PARAMETERS` / locale 元数据并校验 shebang 解释器存在性 |
 | `/api/v1/management/tools/upload-batch` | POST | 批量上传多个 `.py` 工具脚本，单文件错误不影响其他文件 |
 | `/api/v1/management/providers` | GET | LLM Provider 列表 |
+| `/api/v1/management/controllers` | GET | Controller 目录（default / goal / timer，供前端渲染） |
 | `/api/v1/management/metrics` | GET | 数据概览聚合指标（需 `manage:metrics:*` 权限，支持 `?date_from=&date_to=` 日期区间，精确到日） |
 
 ### M2M 端点

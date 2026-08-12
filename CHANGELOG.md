@@ -1,34 +1,29 @@
 # Change Log
 
-## Unreleased
+## 0.1.1
 
-- feat(prompt): system prompt assembly adapters — `GatewayAdapters` gains
-  optional `system_prompt_assembler` / `system_prompt_provider` /
-  `user_preference_provider` fields (types from
-  `minimal_harness.agent.runtime`); `create_runtime()` passes them through
-  to `AgentRuntime`. Chat run context now carries `user_id` so preference
-  providers can resolve per-user prompts. All fields optional — existing
-  deployments need no change. See
-  `docs/system-prompt-assembly-guide.md` for customer adaptation.
-
-## 0.1.1a8
-
-- feat(context): propagate full request context to remote tool services
-  via the request body (`context` field). New `build_tool_context()`
-  assembles user identity (from the full `UserIdentity` now stored in a
-  contextvar via `set_current_identity`), trace id, locale, scenario /
-  agent names and correlation id; `_tool_binding` wires it as a
-  `context_provider` on every `RemoteToolBinding`. Headers keep carrying
-  credentials; structured context travels in the body.
-
-## 0.1.1a7
-
+- feat(controller): `GoalController` / `TimerController` now live in
+  `mh_gateway.services.controllers` (previously imported from
+  `minimal-harness`) — the gateway implements the looping controllers
+  itself against the SDK `Controller` protocol. Per-request
+  `ChatRequest.controller` / `controller_config` route through to the
+  runtime Controller layer (default / goal / timer); `GET
+  /api/v1/management/controllers` catalog endpoint; goal / timer
+  registered with config-backed defaults; ControllerStart / Continue /
+  End events serialised on the chat SSE stream. 第 2 轮起的系统自动
+  prompt 通过 `Agent.run(user_message_meta={"source": "auto"})` 打标记
+  持久化，message API 项带 `auto: true`。timer 模式不再调 judge LLM —
+  时间未到的下一轮输入直接以"用户期望"视角逻辑拼接，轮间零 LLM 等待。
+- feat(metrics): persistent metrics repository, middleware, and
+  management API (`/api/v1/management/metrics`).
+- feat(feedback): user feedback endpoints (`POST /api/v1/feedback`,
+  management list / detail / export), built-in `submit_feedback_fn`
+  tool, session replay highlight matching; user-facing PUT/DELETE
+  feedback routes with `update_content`; `submit_feedback` enforces
+  session ownership and auto-links `target_id`.
 - fix(csv): feedback export prepends a UTF-8 BOM and serves
   `text/csv; charset=utf-8` so Excel opens Chinese comments correctly
   (mh-incubator #39).
-
-## 0.1.1a5
-
 - feat(events): forward `MessageEvent` to the SSE stream (was skipped)
   and surface `message_id` on `AgentEnd` / `LLMEnd` / `CompactionEnd`
   — clients get the canonical `msg-{seq}` id for every message, so
@@ -38,11 +33,6 @@
   `page_size=0` meant `LIMIT 0` in both stores; stores now treat
   `page_size <= 0` as "all" and the session list fetches all rows
   before filtering (mh-incubator #30).
-- docs: customer-adaptation-guide documents the message-id convention
-  and event-ordering contract for session adapters.
-
-## 0.1.1a4
-
 - fix: serialize streaming tool-call deltas as `{index, id, name,
   arguments}` dicts (were repr strings via `json.dumps(default=str)`)
   so the frontend can render tool-call chunks live (mh-incubator #28).
@@ -53,43 +43,32 @@
   (every 50 lines / 100ms) + truncation markers; a 10k-line traversal
   now emits ~200 progress events instead of 10k, and the event loop is
   no longer starved by O(n²) full-buffer joins (mh-incubator #25).
-- chore: bump `minimal-harness` pin to `>=0.8.0a2`, `mh-service-kit`
-  to `>=0.1.2a2` (lockstep with publish set).
-
-## 0.1.1a3
-
-- refactor(controller): `GoalController` / `TimerController` now live in
-  `mh_gateway.services.controllers` (previously imported from
-  `minimal-harness`) — the gateway implements the looping controllers
-  itself against the SDK `Controller` protocol, validating that external
-  apps can plug custom controllers into the layer.
-- feat(controller): per-request `ChatRequest.controller` /
-  `controller_config` routed through to the runtime Controller layer
-  (default / goal / timer); `GET /api/v1/management/controllers` catalog
-  endpoint; goal / timer registered with config-backed defaults;
-  ControllerStart / Continue / End events serialised on the chat SSE
-  stream.
-- feat(controllers): goal/timer 第 2 轮起的系统自动 prompt 通过
-  `Agent.run(user_message_meta={"source": "auto"})` 打标记持久化；
-  message API 项带 `auto: true`，前端据此与真实用户输入区分渲染。
-  需要 minimal-harness>=0.8.0a1。
-- change(controllers): timer 模式不再调 judge LLM——时间未到的下一轮输入
-  直接以"用户期望"视角逻辑拼接（期望至少投入的时长、已过时长、剩余时长、
-  更好地完成用户指令），轮间零 LLM 等待。goal 模式保留 judge。
-- chore: bump `mh-service-kit` pin from `>=0.1.1` to `>=0.1.2a1`
-  (lockstep with publish set).
-
-## 0.1.1a2
-
-- feat(metrics): persistent metrics repository, middleware, and
-  management API.
-- feat(feedback): user feedback endpoints (`POST /api/v1/feedback`,
-  management list / detail / export), built-in `submit_feedback_fn`
-  tool, session replay highlight matching.
-
-## 0.1.1a1
-
-- chore: bump 0.1.0 → 0.1.1a1 (pre-release alignment).
+- feat(context): propagate full request context to remote tool services
+  via the request body (`context` field). New `build_tool_context()`
+  assembles user identity (from the full `UserIdentity` now stored in a
+  contextvar via `set_current_identity`), trace id, locale, scenario /
+  agent names and correlation id; `_tool_binding` wires it as a
+  `context_provider` on every `RemoteToolBinding`. Headers keep carrying
+  credentials; structured context travels in the body.
+- feat(portal): user-facing scenario list API with agents, heat, and
+  homepage flag; docs/portal-adaptation-guide.md for gateway SDK
+  consumers.
+- feat(prompt): system prompt assembly adapters — `GatewayAdapters`
+  gains optional `system_prompt_assembler` / `system_prompt_provider` /
+  `user_preference_provider` fields (types from
+  `minimal_harness.agent.runtime`); `create_runtime()` passes them
+  through to `AgentRuntime`. Chat run context now carries `user_id` so
+  preference providers can resolve per-user prompts. All fields
+  optional — existing deployments need no change. See
+  `docs/system-prompt-assembly-guide.md` for customer adaptation.
+- feat: run the `bash` tool in the current scene's folder by default.
+- feat(handoff): forward sub-agent lifecycle events as tool progress
+  chunks so the frontend sees streaming sub-agent activity.
+- fix: 计时模式描述改为最少工作时间语义.
+- chore: lockstep pins — `minimal-harness>=0.8.0`,
+  `mh-service-kit>=0.1.2` (pre-release alignment across a1–a11).
+- docs: customer-adaptation-guide documents the message-id convention
+  and event-ordering contract for session adapters.
 
 ## 0.1.0a9
 
