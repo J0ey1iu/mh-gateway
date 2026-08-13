@@ -12,6 +12,11 @@
 - raise the one-shot agent run endpoint's `max_iterations` from 10 to
   2000 to match the framework default (silent early stop on long runs).
 
+- fix: judge failures and unparseable judge output no longer silently
+  end goal-controller runs as DONE — they now surface as errors, so a
+  long loop can no longer "mysteriously stop" with no signal (mh-incubator
+  #58).
+
 ## 0.1.2a2
 
 - feat: JSON metadata import/export for scene / agent / tool —

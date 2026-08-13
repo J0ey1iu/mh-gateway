@@ -323,22 +323,32 @@ Rules:
             raise
         except Exception:
             logger.warning("controller.judge.error", exc_info=True)
-            return None  # 安全默认：不继续
+            # 静默判停把 judge 失败伪装成 DONE，长循环里表现为"莫名停止"
+            # （mh-incubator #58）。异常向上抛，让 run 以 error 收束、可观测。
+            raise
 
         return self._parse_judge_response(content)
 
     def _parse_judge_response(self, content: str) -> str | None:
-        """解析 judge 输出：DONE（任意大小写/变体）→ None；``NEXT: xxx`` → xxx；其他 → None。"""
+        """解析 judge 输出：DONE → None；``NEXT: xxx`` → xxx；无法解析 → 抛错。
+
+        无法解析的输出（空内容、裸 ``NEXT``、非 DONE/NEXT 文本）不再静默
+        当作 DONE 判停——那是长循环"莫名停止"的来源（mh-incubator #58）。
+        """
         if not content:
-            return None
+            raise ValueError("judge returned an empty response")
         first_line = content.splitlines()[0].strip()
         upper = first_line.upper()
         if upper.startswith("DONE"):
             return None
         if upper.startswith("NEXT"):
             rest = first_line[len("NEXT") :].lstrip(":： \t-–—").strip()
-            return rest if rest else None
-        return None
+            if rest:
+                return rest
+            raise ValueError(
+                f"judge returned a bare NEXT without a prompt: {content!r}"
+            )
+        raise ValueError(f"judge returned unparseable output: {content!r}")
 
 
 # ── GoalController ───────────────────────────────────────────────────────

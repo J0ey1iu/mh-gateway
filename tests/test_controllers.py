@@ -240,17 +240,13 @@ class TestGoalController:
         assert isinstance(end, ControllerEnd)
         assert end.error == "tool failed"
 
-    async def test_judge_error_defaults_to_stop(self):
+    async def test_judge_error_surfaces_as_error(self):
+        """judge 失败不再静默判 DONE——向上抛，让 run 以 error 收束（mh-incubator #58）。"""
         agent = _FakeAgent([_agent_end(response="answer")])
         controller = GoalController(RaisingLLMProvider(), max_goal_rounds=5)
-        events = await _collect(controller, agent)
 
-        # 安全默认：judge 异常 → DONE（不继续，不报错）
-        assert len(events) == 3
-        end = events[-1]
-        assert isinstance(end, ControllerEnd)
-        assert end.error is None
-        assert end.response == "answer"
+        with pytest.raises(RuntimeError, match="provider down"):
+            await _collect(controller, agent)
 
     async def test_judge_call_receives_stop_event(self):
         """验证 _call_judge 把 stop_event 传给了 llm_provider.chat()。"""
@@ -283,9 +279,23 @@ class TestGoalController:
         assert c._parse_judge_response("Next: do it") == "do it"
         assert c._parse_judge_response("NEXT：做吧") == "做吧"
         assert c._parse_judge_response("NEXT - do it") == "do it"
-        assert c._parse_judge_response("NEXT") is None
-        assert c._parse_judge_response("") is None
-        assert c._parse_judge_response("whatever") is None
+
+    async def test_judge_parse_unparseable_raises(self):
+        """无法解析的输出（空、裸 NEXT、非 DONE/NEXT）不再静默判停。"""
+        c = GoalController(FakeLLMProvider([]), max_goal_rounds=5)
+        for bad in ["", "NEXT", "whatever", "Let me think... then NEXT: do it"]:
+            with pytest.raises(ValueError):
+                c._parse_judge_response(bad)
+
+    async def test_judge_unparseable_surfaces_as_error(self):
+        """judge 输出无法解析 → 异常向上抛，run 以 error 收束（mh-incubator #58）。"""
+        agent = _FakeAgent([_agent_end(response="answer")])
+        controller = GoalController(
+            FakeLLMProvider(["I am not sure"]), max_goal_rounds=5
+        )
+
+        with pytest.raises(ValueError, match="unparseable"):
+            await _collect(controller, agent)
 
     async def test_judge_receives_conversation_messages(self):
         agent = _FakeAgent([_agent_end()])
