@@ -137,6 +137,32 @@ HTTP Request
             └─ permission_checker.check("use:tool:{name}") → 拦截
 ```
 
+## JSON 批量导入（scene / agent / tool）
+
+管理 API 提供 JSON 导入与模板下载：
+
+- `POST /api/v1/management/import` — 一次上传多个 JSON 文件（每个文件定义一个
+  scene / agent / tool 实体）。权限按**文件实际携带的实体类型**逐项校验：
+  导入含 scene 文件需要 `manage:scene:*`，含 agent 文件需要 `manage:agent:*`，
+  含 tool 文件需要 `manage:tool:*`，缺任一权限即整批 403。
+- `GET /api/v1/management/import/templates/{entity_type}` — 下载导入模板，
+  权限对应 `manage:{entity_type}:*`（scene / agent / tool）。
+
+导入为原子操作：任一文件存在语法/结构错误（或与现有实体重名、批内重复）时整批
+失败（422），并返回每个文件的问题明细（JSON 路径、行列号），引导用户修改。
+实体之间的关联关系（scene.agents、agent.tool_names）不支持导入。
+
+导出与导入互为镜像，导出的文件可直接重新导入（单实体为 JSON 对象，批量导出为
+JSON 数组）：
+
+- `GET /api/v1/management/export/{entity_type}` — 批量导出（`?ids=a,b,c` 选指定
+  实体，缺省导出全部），权限 `manage:{entity_type}:*`。
+- `GET /api/v1/management/export/{entity_type}/{key}` — 单个实体导出，权限同上。
+
+导出仅包含可导入的元数据字段，不含服务端审计字段与关联关系。分享的元数据在接收
+方可能没有对应实现（如工具缺 endpoint/脚本、Agent 引用未配置的 provider）：运行时
+对这类调用会记录异常并以可恢复的方式失败，不会拖垮整个系统。
+
 ---
 
 ## 内置 Demo 用户

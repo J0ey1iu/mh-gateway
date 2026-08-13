@@ -11,7 +11,15 @@ from pydantic import BaseModel
 
 from mh_gateway.adapters import Feedback
 
-from mh_gateway.api.dependencies import require_permission
+from mh_gateway.api.dependencies import get_current_user, require_permission
+from mh_gateway.api.imports import (
+    ImportFileResult,
+    ImportIssue,
+    build_export_payload,
+    get_template,
+    sanitize_filename,
+    validate_import_content,
+)
 from mh_gateway.llm import LLMProviderConfig
 from mh_gateway.services.runtime_service import build_controller_registry
 from minimal_harness.agent.factory import get_builtin_agent_type_schemas
@@ -986,6 +994,238 @@ async def upload_tool_script(
         )
     except ValueError as e:
         raise HTTPException(422, str(e)) from None
+
+
+# ── JSON Import / Templates ──
+
+
+_IMPORT_PERMISSIONS = {
+    "scene": "manage:scene:*",
+    "agent": "manage:agent:*",
+    "tool": "manage:tool:*",
+}
+
+
+async def _require_import_permissions(
+    request: Request, user_id: str, entity_types: set[str]
+) -> None:
+    """Require the manage:* permission for every entity type being imported.
+
+    A single import batch may mix scene / agent / tool files, so the
+    permission is checked per type instead of one global gate.
+    """
+    adapters = request.app.state.adapters
+    for t in sorted(entity_types):
+        perm = _IMPORT_PERMISSIONS[t]
+        ok = await adapters.authorization.check(user_id, perm)
+        if not ok:
+            raise HTTPException(status_code=403, detail=f"Permission denied: {perm}")
+
+
+@router.get("/import/templates/{entity_type}")
+async def download_import_template(
+    request: Request,
+    entity_type: str,
+    user_id: str = Depends(get_current_user),
+) -> Response:
+    """Download a JSON import template for scene / agent / tool."""
+    template = get_template(entity_type)
+    if template is None:
+        raise HTTPException(404, f"Unknown entity type: {entity_type}")
+    await _require_import_permissions(request, user_id, {entity_type})
+    return _export_response(
+        json.dumps(template, ensure_ascii=False, indent=2) + "\n",
+        f"{entity_type}-template.json",
+    )
+
+
+@router.post("/import", status_code=201)
+async def import_entities(
+    request: Request,
+    files: list[UploadFile],
+    user_id: str = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Import scene / agent / tool entities from JSON files (batch, atomic).
+
+    Every file must pass syntax + structure validation, otherwise the
+    whole batch is rejected and nothing is created.  Relationship fields
+    (scene.agents, agent.tool_names) are not importable.
+    """
+    mgmt = request.app.state.adapters.metadata
+    if mgmt is None:
+        raise HTTPException(501, "Management provider not configured")
+    if not files:
+        raise HTTPException(422, "No files provided")
+
+    results: list[ImportFileResult] = []
+    for f in files:
+        filename = f.filename or "(unknown)"
+        if not filename.lower().endswith(".json"):
+            r = ImportFileResult(filename=filename, ok=False)
+            r.issues.append(
+                ImportIssue(
+                    path="$",
+                    message="仅接受 .json 文件",
+                    code="bad_extension",
+                )
+            )
+            results.append(r)
+            continue
+        # A file may be a single entity object or an array bundle
+        # (the batch-export format); every element is validated
+        # independently and the batch stays atomic.
+        results.extend(validate_import_content(filename, await f.read()))
+
+    # Permission check: require manage:* for every entity type present.
+    await _require_import_permissions(
+        request, user_id, {r.entity_type for r in results if r.entity_type}
+    )
+
+    # Conflict checks: against existing entities and within the batch.
+    existing: dict[str, set[str]] = {
+        "scene": {s["id"] for s in await mgmt.list_scenarios()},
+        "agent": {a["name"] for a in await mgmt.list_agents()},
+        "tool": {t["name"] for t in await mgmt.list_tools()},
+    }
+    seen: dict[tuple[str, str], str] = {}
+    for r in results:
+        if not r.ok or not r.entity_type or not r.entity_key:
+            continue
+        t, key = r.entity_type, r.entity_key
+        if key in existing[t]:
+            r.ok = False
+            label = "场景" if t == "scene" else "Agent" if t == "agent" else "工具"
+            r.issues.append(
+                ImportIssue(
+                    path="$",
+                    message=f"{label}「{key}」已存在，无法导入（名称需全局唯一）",
+                    code="conflict",
+                )
+            )
+        elif (t, key) in seen:
+            r.ok = False
+            r.issues.append(
+                ImportIssue(
+                    path="$",
+                    message=(
+                        f"与文件「{seen[(t, key)]}」中的实体重复"
+                        f"（{key}），请只保留其中一个"
+                    ),
+                    code="duplicate",
+                )
+            )
+        else:
+            seen[(t, key)] = r.filename
+
+    bad = [r for r in results if not r.ok]
+    if bad:
+        raise HTTPException(
+            422,
+            detail={
+                "message": (
+                    f"导入失败：{len(bad)} 个文件存在错误，未导入任何实体，请按提示修改后重试"
+                ),
+                "files": [r.model_dump() for r in results],
+            },
+        )
+
+    created: list[dict[str, Any]] = []
+    for r in results:
+        payload = {**(r.payload or {}), "created_by": user_id}
+        if r.entity_type == "scene":
+            created.append(await mgmt.create_scenario(payload))
+        elif r.entity_type == "agent":
+            created.append(await mgmt.create_agent(payload))
+        else:
+            created.append(await mgmt.create_tool(payload))
+        logger.info(
+            "Imported %s key=%s by user=%s", r.entity_type, r.entity_key, user_id
+        )
+    return {"created": created, "file_count": len(created)}
+
+
+# ── JSON Export ──
+
+
+def _accessors(mgmt: Any, entity_type: str) -> tuple[str, Any, Any]:
+    """Return (key field, single-getter, list-getter) for an entity type."""
+    if entity_type == "scene":
+        return "id", mgmt.get_scenario, mgmt.list_scenarios
+    if entity_type == "agent":
+        return "name", mgmt.get_agent, mgmt.list_agents
+    return "name", mgmt.get_tool, mgmt.list_tools
+
+
+def _export_response(content: str, filename: str) -> Response:
+    return Response(
+        content=content,
+        media_type="application/json; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/export/{entity_type}")
+async def export_entities(
+    request: Request,
+    entity_type: str,
+    ids: str | None = Query(None, description="Comma-separated keys; empty = all"),
+    user_id: str = Depends(get_current_user),
+) -> Response:
+    """Batch-export scene / agent / tool metadata as a JSON array file.
+
+    ``ids`` selects specific entities (by scene id / agent or tool name);
+    without it every entity of that type is exported.  The file is the
+    batch-import format: a JSON array of importable entity objects.
+    """
+    if entity_type not in _IMPORT_PERMISSIONS:
+        raise HTTPException(404, f"Unknown entity type: {entity_type}")
+    await _require_import_permissions(request, user_id, {entity_type})
+    mgmt = request.app.state.adapters.metadata
+    if mgmt is None:
+        raise HTTPException(501, "Management provider not configured")
+
+    if ids:
+        keys = [k for k in (k.strip() for k in ids.split(",")) if k]
+        key_field, _, list_all = _accessors(mgmt, entity_type)
+        entities = [e for e in await list_all() if str(e.get(key_field, "")) in keys]
+    else:
+        _, _, list_all = _accessors(mgmt, entity_type)
+        entities = await list_all()
+
+    payloads = [build_export_payload(entity_type, e) for e in entities]
+    content = json.dumps(payloads, ensure_ascii=False, indent=2) + "\n"
+    logger.info(
+        "Exported %d %s entity(ies) by user=%s ids=%s",
+        len(payloads),
+        entity_type,
+        user_id,
+        ids or "(all)",
+    )
+    return _export_response(content, f"{entity_type}-batch-export.json")
+
+
+@router.get("/export/{entity_type}/{key}")
+async def export_entity(
+    request: Request,
+    entity_type: str,
+    key: str,
+    user_id: str = Depends(get_current_user),
+) -> Response:
+    """Export a single scene / agent / tool as one importable JSON file."""
+    if entity_type not in _IMPORT_PERMISSIONS:
+        raise HTTPException(404, f"Unknown entity type: {entity_type}")
+    await _require_import_permissions(request, user_id, {entity_type})
+    mgmt = request.app.state.adapters.metadata
+    if mgmt is None:
+        raise HTTPException(501, "Management provider not configured")
+
+    entity = await _accessors(mgmt, entity_type)[1](key)
+    if entity is None:
+        raise HTTPException(404, f"{entity_type.capitalize()} '{key}' not found")
+    payload = build_export_payload(entity_type, entity)
+    content = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    logger.info("Exported %s %s by user=%s", entity_type, key, user_id)
+    return _export_response(content, f"{entity_type}-{sanitize_filename(key)}.json")
 
 
 @router.post("/tools/upload-batch", status_code=201)
