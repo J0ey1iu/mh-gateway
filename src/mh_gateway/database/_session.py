@@ -1,16 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from typing import Any, Protocol, TypedDict
+from typing import Protocol, TypedDict
 from uuid import uuid4
 
-from minimal_harness.memory import (
-    ConversationMemory,
-    Memory,
-    MemoryData,
-    Message,
-)
-from minimal_harness.types import CompactionEvent, CompactionSummarizer, TokenUsage
+from minimal_harness.memory import ConversationMemory, Memory
 
 from mh_gateway.database._ids import generate_bigint_id
 
@@ -29,21 +22,18 @@ class SessionSummary(TypedDict):
     )  # JSON-encoded i18n dict, e.g. {"zh":"通用助手","en":"General Assistant"}
 
 
-class Session(Protocol):
+class Session(Memory, Protocol):
     """An identity-enriched Memory.
 
-    Carries user/scenario context and delegates all message operations
-    to an underlying Memory instance.  Stores that work with ``Session``
-    can expose user- and scenario-level information without relying on
-    the ``MemoryData.extra`` dict.
+    Inherits the full :class:`Memory` protocol surface: any member
+    minimal-harness adds to ``Memory`` is automatically required of
+    every ``Session`` implementation. pyright and the contract tests in
+    ``tests/test_session_contract.py`` catch drift at build time instead
+    of an AttributeError deep inside the agent loop (mh-incubator #58).
     """
 
     @property
     def session_id(self) -> str: ...
-    @property
-    def memory_id(self) -> str: ...
-    @property
-    def agent_name(self) -> str: ...
     @property
     def display_name_locale(self) -> str | None: ...
     @property
@@ -51,34 +41,17 @@ class Session(Protocol):
     @property
     def scenario_id(self) -> str | None: ...
     @property
-    def title(self) -> str | None: ...
-    @property
-    def created_at(self) -> str: ...
-    @property
     def memory(self) -> Memory: ...
 
-    async def add_message(self, message: Message) -> None: ...
-    def get_all_messages(self) -> list[Message]: ...
-    def get_forward_messages(self) -> list[Message]: ...
-    def clear_messages(self) -> None: ...
-    def set_message_usage(self, usage: TokenUsage) -> None: ...
-    def get_message_usage(self) -> TokenUsage: ...
-    def dump_memory(self) -> MemoryData: ...
-    def load_memory(self, data: MemoryData) -> None: ...
 
-    def compact(
-        self,
-        summarizer: CompactionSummarizer,
-        keep_recent: int,
-        total_tokens: int,
-    ) -> AsyncIterator[CompactionEvent]: ...
-    def reset_message_usage(self) -> None: ...
+class SimpleSession(ConversationMemory):
+    """A basic Session implementation: a ConversationMemory plus session identity.
 
-    async def strip_tool_call_pairs(self) -> AsyncIterator[CompactionEvent]: ...
-
-
-class SimpleSession:
-    """A basic Session implementation backed by ConversationMemory."""
+    Subclassing :class:`ConversationMemory` instead of hand-delegating
+    means the entire Memory surface is inherited — a new Memory protocol
+    member can never silently go missing from this class again. The only
+    members overridden here are the identity properties.
+    """
 
     def __init__(
         self,
@@ -88,20 +61,35 @@ class SimpleSession:
         scenario_id: str | None = None,
         display_name_locale: str | None = None,
     ) -> None:
-        self._memory = ConversationMemory()
+        super().__init__()
         self.db_id: int = generate_bigint_id()
         self.session_id = session_id or f"sess_{uuid4().hex[:12]}"
-        self.memory_id = self.session_id
-        self.agent_name = agent_name
+        self._agent_name = agent_name
         self.user_id = user_id
         self.scenario_id = scenario_id
-        self.title: str | None = None
+        self._title: str | None = None
         self.display_name_locale = display_name_locale
         self._created_at = ""
 
     @property
     def memory(self) -> Memory:
-        return self._memory
+        return self
+
+    @property
+    def memory_id(self) -> str:
+        return self.session_id
+
+    @property
+    def agent_name(self) -> str:
+        return self._agent_name
+
+    @property
+    def title(self) -> str | None:
+        return self._title
+
+    @title.setter
+    def title(self, value: str | None) -> None:
+        self._title = value
 
     @property
     def created_at(self) -> str:
@@ -110,46 +98,3 @@ class SimpleSession:
     @created_at.setter
     def created_at(self, value: str) -> None:
         self._created_at = value
-
-    async def add_message(self, message: Message) -> None:
-        await self._memory.add_message(message)
-
-    def get_all_messages(self) -> list[Message]:
-        return self._memory.get_all_messages()
-
-    def get_forward_messages(self) -> list[Message]:
-        return self._memory.get_forward_messages()
-
-    def clear_messages(self) -> None:
-        self._memory.clear_messages()
-
-    def set_message_usage(self, usage: Any) -> None:
-        self._memory.set_message_usage(usage)
-
-    def get_message_usage(self) -> Any:
-        return self._memory.get_message_usage()
-
-    def dump_memory(self) -> Any:
-        return self._memory.dump_memory()
-
-    def load_memory(self, data: Any) -> None:
-        self._memory.load_memory(data)
-
-    def compact(
-        self,
-        summarizer: Any,
-        keep_recent: int,
-        total_tokens: int,
-    ) -> Any:
-        return self._memory.compact(
-            summarizer=summarizer,
-            keep_recent=keep_recent,
-            total_tokens=total_tokens,
-        )
-
-    def reset_message_usage(self) -> None:
-        self._memory.reset_message_usage()
-
-    async def strip_tool_call_pairs(self) -> Any:
-        async for evt in self._memory.strip_tool_call_pairs():
-            yield evt

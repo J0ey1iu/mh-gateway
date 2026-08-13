@@ -1,5 +1,14 @@
 # Change Log
 
+## Unreleased
+
+- fix: `SimpleSession` now subclasses `ConversationMemory` and the
+  `Session` protocol inherits `Memory`, so the session's memory surface
+  can no longer drift from the minimal-harness contract (fixes the
+  `get_replay_messages` AttributeError on long-running sessions,
+  mh-incubator #58). Contract tests in `tests/test_session_contract.py`
+  fail the suite if a future Memory protocol member goes missing again.
+
 ## 0.1.2a2
 
 - feat: JSON metadata import/export for scene / agent / tool —
