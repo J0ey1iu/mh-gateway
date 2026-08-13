@@ -25,6 +25,10 @@ _trace_id_context_var: contextvars.ContextVar[str] = contextvars.ContextVar(
     "current_trace_id", default=""
 )
 
+_session_id_context_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "current_session_id", default=""
+)
+
 # ── Request ────────────────────────────────────────────────────────────────────
 
 
@@ -159,6 +163,29 @@ def build_tool_context(
     if correlation_id:
         ctx["correlation_id"] = correlation_id
     return ctx
+
+
+# ── Session ID (set per chat request; attachment tools use it for ownership) ──
+
+
+def set_current_session_id(session_id: str) -> None:
+    _session_id_context_var.set(session_id)
+
+
+def clear_current_session_id() -> None:
+    """Reset to the default.
+
+    Deliberately a plain ``set``, NOT a token-based ``reset``: the set happens
+    in the FastAPI endpoint's context while the cleanup runs later inside the
+    streaming generator (a different context under real uvicorn).  A token
+    reset there raises ``ValueError: Token was created in a different Context``
+    — see ``tests/test_session_context.py``.
+    """
+    _session_id_context_var.set("")
+
+
+def get_current_session_id() -> str:
+    return _session_id_context_var.get()
 
 
 # ── Trace ID (for distributed tracing / logging) ────────────────────────────────

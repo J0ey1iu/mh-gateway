@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from mh_gateway.api.agents import router as agents_router
+from mh_gateway.api.attachments import router as attachments_router
 from mh_gateway.api.auth_routes import auth_router
 from mh_gateway.api.chat import router as chat_router
 from mh_gateway.api.feedback import router as feedback_router
@@ -22,6 +23,7 @@ router.include_router(scenarios_router)
 router.include_router(sessions_router)
 router.include_router(guide_router)
 router.include_router(agents_router)
+router.include_router(attachments_router)
 router.include_router(tools_router)
 router.include_router(runtime_tools_router)
 router.include_router(feedback_router)

@@ -6,6 +6,12 @@ from mh_gateway.builtin_agents.local_tools import (
     read_file_fn,
     write_file_fn,
 )
+from mh_gateway.builtin_agents.attachment_tools import (
+    ATTACHMENT_TOOL_METADATA,
+    ATTACHMENT_TOOL_NAMES,
+    list_attachments_fn,
+    read_attachment_fn,
+)
 from mh_gateway.builtin_agents.registry import (
     _discover_agents_fn,
     _handoff_fn,
@@ -20,4 +26,8 @@ __all__ = (
     "read_file_fn",
     "write_file_fn",
     "BUILTIN_TOOL_METADATA",
+    "ATTACHMENT_TOOL_METADATA",
+    "ATTACHMENT_TOOL_NAMES",
+    "list_attachments_fn",
+    "read_attachment_fn",
 )

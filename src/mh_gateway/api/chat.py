@@ -15,8 +15,14 @@ from mh_gateway.api.dependencies import (
 )
 from mh_gateway.api.locale import parse_locale
 from mh_gateway.adapters import SessionRepository, match_permission
-from mh_gateway.context import get_current_trace_id
+from mh_gateway.builtin_agents.attachment_tools import ATTACHMENT_TOOL_NAMES
+from mh_gateway.context import (
+    clear_current_session_id,
+    get_current_trace_id,
+    set_current_session_id,
+)
 from mh_gateway.services.database import get_session_store
+from minimal_harness.memory import ExtendedInputContentPart
 from mh_gateway.services.runtime_service import (
     acquire_session_lock,
     create_runtime,
@@ -36,6 +42,14 @@ class ChatRequest(BaseModel):
     # controller_config 例如 {"max_goal_rounds": 5} 或 {"duration": "30m"}
     controller: str = "default"
     controller_config: dict[str, Any] = {}
+    # 本次输入携带的上传附件（file_id/file_name/file_size/backend_type）。
+    # 服务端校验归属并绑定到当前会话后，作为用户消息的 file content parts
+    # 持久化，模型侧通过附件工具读取内容。
+    attachments: list[AttachmentRef] | None = None
+
+
+class AttachmentRef(BaseModel):
+    file_id: str
 
 
 async def _resolve_tool_display_name(
@@ -114,12 +128,50 @@ async def chat(
         scenario_id = session.scenario_id or ""
         trace_id = get_current_trace_id()
 
+        # ── Attachments: validate ownership, bind to this session, and
+        # enable the attachment tools for this run ──
+        attachment_metas: list[dict[str, Any]] = []
+        if body.attachments:
+            attachment_store = getattr(request.app.state.adapters, "attachments", None)
+            if attachment_store is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Attachments are not enabled in this deployment",
+                )
+            seen: set[str] = set()
+            for ref in body.attachments:
+                if ref.file_id in seen:
+                    continue
+                seen.add(ref.file_id)
+                record = await attachment_store.get(ref.file_id)
+                if record is None:
+                    raise HTTPException(
+                        status_code=404, detail=f"Attachment not found: {ref.file_id}"
+                    )
+                if record.user_id != user_id:
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"Access denied to attachment: {ref.file_id}",
+                    )
+                await attachment_store.bind(ref.file_id, memory_id)
+                attachment_metas.append(record.as_metadata())
+            # 只有本次输入携带附件时才注入附件工具：不污染无关 agent 的
+            # context window。
+            tool_names.extend(
+                t
+                for t in ATTACHMENT_TOOL_NAMES
+                if match_permission(user_perms, f"use:tool:{t}")
+            )
+
+        set_current_session_id(memory_id)
+
         async def _stream_with_lock():
             try:
                 async for event in _stream_events(
                     request=request,
                     user_id=user_id,
                     message=body.message,
+                    attachments=attachment_metas,
                     session=session,
                     memory_id=memory_id,
                     agent_name=agent_name,
@@ -133,6 +185,7 @@ async def chat(
                 ):
                     yield event
             finally:
+                clear_current_session_id()
                 await release_session_lock(memory_id, lock)
 
         return StreamingResponse(
@@ -153,6 +206,7 @@ async def _stream_events(
     request: Request,
     user_id: str,
     message: str,
+    attachments: list[dict[str, Any]],
     session: Any,
     memory_id: str,
     agent_name: str,
@@ -179,12 +233,27 @@ async def _stream_events(
             trace_id=trace_id,
         )
 
+        # 用户消息：文本 + 附件 file parts。附件元数据随消息持久化
+        # （前端刷新后从读侧拿回渲染），模型侧由 provider 投影为
+        # “[File: name (id=…)]” 纯文本 + 附件工具读取内容。
+        user_input: list[ExtendedInputContentPart] = [
+            {"type": "text", "text": message}  # type: ignore[list-item]
+        ]
+        user_input.extend(
+            {"type": "file", "file": meta}  # type: ignore[dict-item]
+            for meta in attachments
+        )
+
         task, stop_event, queue = await runtime.run(
-            user_input=[{"type": "text", "text": message}],
+            user_input=user_input,
             agent_metadata_id=agent_name,
             memory_id=memory_id,
             tool_names=tool_names,
-            context={"locale": locale, "user_id": user_id} if locale else {"user_id": user_id},
+            context=(
+                {"locale": locale, "user_id": user_id}
+                if locale
+                else {"user_id": user_id}
+            ),
             controller_type=controller_type,
             controller_config=controller_config,
         )
