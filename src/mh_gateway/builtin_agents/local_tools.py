@@ -5,8 +5,8 @@ import collections
 import difflib
 import json
 import os
-import shutil
 import sys
+from itertools import islice
 from typing import Any, AsyncIterator
 from uuid import uuid4
 
@@ -52,7 +52,7 @@ async def bash_fn(
     if cwd and not os.path.isdir(cwd):
         yield {
             "status": "error",
-            "message": f"Working directory does not exist: {cwd}. Use local_file_operator with mkdir to create it first, or omit workdir to use the default directory.",
+            "message": f"Working directory does not exist: {cwd}. Use write_file (it creates parent directories automatically) or create the directory first, or omit workdir to use the default directory.",
         }
         return
 
@@ -331,299 +331,133 @@ async def _write_chunked(f, content: str) -> AsyncIterator[dict[str, Any]]:
         }
 
 
-async def local_file_operator_fn(
-    operation: str = "",
+async def read_file_fn(
     path: str = "",
-    content: str = "",
+    offset: int = 1,
+    limit: int = 2000,
+) -> AsyncIterator[Any]:
+    if not path:
+        yield {"status": "error", "message": "path is required"}
+        return
+    yield {"status": "progress", "message": f"Reading file: {path}"}
+    if not os.path.isfile(path):
+        yield {"status": "error", "message": f"File not found: {path}"}
+        return
+    start = max(int(offset), 1) - 1
+    max_lines = max(int(limit), 1)
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        skipped = sum(1 for _ in islice(f, start))
+        selected = list(islice(f, max_lines))
+        rest = sum(1 for _ in f)
+    total = skipped + len(selected) + rest
+    truncated = rest > 0
+    yield {
+        "status": "ok",
+        "message": (
+            f"Read lines {skipped + 1}-{skipped + len(selected)} of {total} from {path}"
+            + (" (truncated - use offset to read the next page)" if truncated else "")
+        ),
+        "content": "".join(selected),
+        "path": path,
+        "start_line": skipped + 1,
+        "end_line": skipped + len(selected),
+        "total_lines": total,
+        "truncated": truncated,
+    }
+
+
+async def write_file_fn(path: str = "", content: str = "") -> AsyncIterator[Any]:
+    if not path:
+        yield {"status": "error", "message": "path is required"}
+        return
+    yield {"status": "progress", "message": f"Writing to file: {path}"}
+    parent = os.path.dirname(path)
+    if parent and not os.path.isdir(parent):
+        os.makedirs(parent, exist_ok=True)
+        yield {
+            "status": "progress",
+            "message": f"Created parent directory: {parent}",
+        }
+    with open(path, "w", encoding="utf-8") as f:
+        async for p in _write_chunked(f, content):
+            yield p
+    yield {
+        "status": "ok",
+        "message": f"Successfully wrote {len(content)} characters to {path}",
+        "path": path,
+        "size": len(content),
+    }
+
+
+async def append_file_fn(path: str = "", content: str = "") -> AsyncIterator[Any]:
+    if not path:
+        yield {"status": "error", "message": "path is required"}
+        return
+    yield {"status": "progress", "message": f"Appending to file: {path}"}
+    if os.path.isfile(path):
+        with open(path, "a", encoding="utf-8") as f:
+            async for p in _write_chunked(f, content):
+                yield p
+        yield {
+            "status": "ok",
+            "message": f"Successfully appended {len(content)} characters to {path}",
+            "path": path,
+            "size": len(content),
+        }
+    else:
+        yield {
+            "status": "error",
+            "message": f"File not found for appending: {path}. Use write_file to create the file first.",
+            "suggestion": "Use write_file (not append_file) to create a new file",
+        }
+
+
+async def edit_file_fn(
+    path: str = "",
     old_string: str = "",
     new_string: str = "",
-    source: str = "",
-    destination: str = "",
-    recursive: bool = False,
-    limit: int = 0,
 ) -> AsyncIterator[Any]:
-    if not operation:
-        yield {"status": "error", "message": "operation is required"}
+    if not path:
+        yield {"status": "error", "message": "path is required"}
         return
-
-    valid_operations = [
-        "read",
-        "write",
-        "append",
-        "edit",
-        "delete",
-        "list_dir",
-        "mkdir",
-        "move",
-        "copy",
-        "exists",
-    ]
-    if operation not in valid_operations:
+    if not old_string:
+        yield {"status": "error", "message": "old_string is required"}
+        return
+    yield {"status": "progress", "message": f"Editing file: {path}"}
+    if not os.path.isfile(path):
+        yield {"status": "error", "message": f"File not found: {path}"}
+        return
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        data = f.read()
+    if old_string not in data:
         yield {
             "status": "error",
-            "message": f"Invalid operation '{operation}'. Valid operations: {', '.join(valid_operations)}",
+            "message": f"old_string not found in {path}. The exact text to replace must match the file content exactly (including whitespace and line endings). Use read_file first to verify the actual content, then retry edit_file with the precise text.",
+            "file_content_preview": data[:500],
+            "suggestion": "Use read_file to see the actual file content, then copy the exact text into old_string",
         }
         return
-
-    try:
-        if operation == "read":
-            yield {"status": "progress", "message": f"Reading file: {path}"}
-            if not os.path.isfile(path):
-                yield {"status": "error", "message": f"File not found: {path}"}
-                return
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                data = f.read()
-            yield {
-                "status": "ok",
-                "message": f"Read {len(data)} characters from {path}",
-                "content": data,
-                "path": path,
-                "size": len(data),
-            }
-
-        elif operation == "write":
-            yield {"status": "progress", "message": f"Writing to file: {path}"}
-            parent = os.path.dirname(path)
-            if parent and not os.path.isdir(parent):
-                os.makedirs(parent, exist_ok=True)
-                yield {
-                    "status": "progress",
-                    "message": f"Created parent directory: {parent}",
-                }
-            with open(path, "w", encoding="utf-8") as f:
-                async for p in _write_chunked(f, content):
-                    yield p
-            yield {
-                "status": "ok",
-                "message": f"Successfully wrote {len(content)} characters to {path}",
-                "path": path,
-                "size": len(content),
-            }
-
-        elif operation == "append":
-            yield {"status": "progress", "message": f"Appending to file: {path}"}
-            if os.path.isfile(path):
-                with open(path, "a", encoding="utf-8") as f:
-                    async for p in _write_chunked(f, content):
-                        yield p
-                yield {
-                    "status": "ok",
-                    "message": f"Successfully appended {len(content)} characters to {path}",
-                    "path": path,
-                    "size": len(content),
-                }
-            else:
-                yield {
-                    "status": "error",
-                    "message": f"File not found for appending: {path}. Use operation='write' to create the file first, or check the path with operation='exists'.",
-                    "suggestion": "Use write (not append) to create a new file",
-                }
-
-        elif operation == "edit":
-            yield {"status": "progress", "message": f"Editing file: {path}"}
-            if not os.path.isfile(path):
-                yield {"status": "error", "message": f"File not found: {path}"}
-                return
-            if not old_string:
-                yield {
-                    "status": "error",
-                    "message": "old_string is required for edit operation",
-                }
-                return
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                data = f.read()
-            if old_string not in data:
-                yield {
-                    "status": "error",
-                    "message": f"old_string not found in {path}. The exact text to replace must match the file content exactly (including whitespace and line endings). Use operation='read' first to verify the actual content, then retry edit with the precise text.",
-                    "file_content_preview": data[:500],
-                    "suggestion": "Use read to see the actual file content, then copy the exact text into old_string",
-                }
-                return
-            count = data.count(old_string)
-            new_data = data.replace(old_string, new_string)
-            diff_lines = list(
-                difflib.unified_diff(
-                    data.splitlines(keepends=True),
-                    new_data.splitlines(keepends=True),
-                    fromfile=path,
-                    tofile=path,
-                    lineterm="",
-                )
-            )
-            with open(path, "w", encoding="utf-8") as f:
-                async for p in _write_chunked(f, new_data):
-                    yield p
-            yield {
-                "status": "ok",
-                "message": f"Replaced {count} occurrence(s) in {path}",
-                "path": path,
-                "replacement_count": count,
-                "diff": diff_lines,
-            }
-
-        elif operation == "delete":
-            yield {"status": "progress", "message": f"Deleting: {path}"}
-            if os.path.isfile(path):
-                os.remove(path)
-                yield {"status": "ok", "message": f"Deleted file: {path}"}
-            elif os.path.isdir(path):
-                shutil.rmtree(path)
-                yield {"status": "ok", "message": f"Deleted directory: {path}"}
-            else:
-                yield {"status": "error", "message": f"Path not found: {path}"}
-
-        elif operation == "list_dir":
-            yield {"status": "progress", "message": f"Listing directory: {path}"}
-            if os.path.isfile(path):
-                yield {
-                    "status": "error",
-                    "message": f"Path is a file, not a directory: {path}. Use operation='read' to read the file content.",
-                    "suggestion": "Use read to read this file, or provide a directory path",
-                }
-                return
-            if not os.path.isdir(path):
-                yield {"status": "error", "message": f"Directory not found: {path}"}
-                return
-            entries = []
-            try:
-                for entry in os.scandir(path):
-                    info = {
-                        "name": entry.name,
-                        "type": "directory" if entry.is_dir() else "file",
-                        "size": entry.stat().st_size if entry.is_file() else 0,
-                    }
-                    entries.append(info)
-            except PermissionError:
-                yield {"status": "error", "message": f"Permission denied: {path}"}
-                return
-            entries_sorted = sorted(entries, key=lambda x: (x["type"], x["name"]))
-            if limit > 0 and len(entries_sorted) > limit:
-                entries_sorted = entries_sorted[:limit]
-            yield {
-                "status": "ok",
-                "message": f"Listed {len(entries_sorted)} entries in {path}"
-                + (f" (showing first {limit})" if 0 < limit < len(entries) else ""),
-                "entries": entries_sorted,
-                "path": path,
-                "total": len(entries),
-            }
-
-        elif operation == "mkdir":
-            yield {"status": "progress", "message": f"Creating directory: {path}"}
-            if recursive:
-                os.makedirs(path, exist_ok=True)
-            else:
-                try:
-                    os.mkdir(path)
-                except FileExistsError:
-                    yield {
-                        "status": "error",
-                        "message": f"Directory already exists: {path}. If you want to create parent directories as well, use recursive=True.",
-                        "suggestion": "Use recursive=True to create parent directories, or use a different path",
-                    }
-                    return
-            yield {"status": "ok", "message": f"Created directory: {path}"}
-
-        elif operation == "move":
-            yield {"status": "progress", "message": f"Moving {source} -> {destination}"}
-            if not source:
-                yield {
-                    "status": "error",
-                    "message": "source is required for move operation",
-                }
-                return
-            if not destination:
-                yield {
-                    "status": "error",
-                    "message": "destination is required for move operation",
-                }
-                return
-            parent = os.path.dirname(destination)
-            if parent and not os.path.isdir(parent):
-                os.makedirs(parent, exist_ok=True)
-            shutil.move(source, destination)
-            yield {
-                "status": "ok",
-                "message": f"Moved {source} -> {destination}",
-                "source": source,
-                "destination": destination,
-            }
-
-        elif operation == "copy":
-            yield {
-                "status": "progress",
-                "message": f"Copying {source} -> {destination}",
-            }
-            if not source:
-                yield {
-                    "status": "error",
-                    "message": "source is required for copy operation",
-                }
-                return
-            if not destination:
-                yield {
-                    "status": "error",
-                    "message": "destination is required for copy operation",
-                }
-                return
-            parent = os.path.dirname(destination)
-            if parent and not os.path.isdir(parent):
-                os.makedirs(parent, exist_ok=True)
-            if os.path.isdir(source):
-                shutil.copytree(source, destination, dirs_exist_ok=True)
-            else:
-                shutil.copy2(source, destination)
-            yield {
-                "status": "ok",
-                "message": f"Copied {source} -> {destination}",
-                "source": source,
-                "destination": destination,
-            }
-
-        elif operation == "exists":
-            exists = os.path.exists(path)
-            is_file = os.path.isfile(path) if exists else False
-            is_dir = os.path.isdir(path) if exists else False
-            yield {
-                "status": "ok",
-                "message": f"Path {'exists' if exists else 'does not exist'}: {path}",
-                "path": path,
-                "exists": exists,
-                "is_file": is_file,
-                "is_dir": is_dir,
-            }
-
-    except FileNotFoundError:
-        yield {
-            "status": "error",
-            "message": f"Path not found: {path}. Verify the path with operation='exists' or create it with write/mkdir first.",
-            "suggestion": "Check if the path exists using exists operation, or create it",
-        }
-    except PermissionError:
-        yield {
-            "status": "error",
-            "message": f"Permission denied: {path}. The process does not have the required permissions.",
-            "suggestion": "Use a path the user has access to, or change file permissions",
-        }
-    except IsADirectoryError:
-        yield {
-            "status": "error",
-            "message": f"Expected a file but path is a directory: {path}. Use operation='list_dir' to list its contents instead.",
-            "suggestion": "Use list_dir to browse the directory, or include a filename in the path",
-        }
-    except NotADirectoryError:
-        yield {
-            "status": "error",
-            "message": f"Expected a directory but path is a file: {path}. Use operation='read' to read the file instead.",
-            "suggestion": "Use read to read the file, or provide a directory path for this operation",
-        }
-    except OSError as e:
-        yield {
-            "status": "error",
-            "message": f"File operation failed: {e}",
-            "suggestion": "Check that the path is valid and the operation is appropriate for this path type",
-        }
+    count = data.count(old_string)
+    new_data = data.replace(old_string, new_string)
+    diff_lines = list(
+        difflib.unified_diff(
+            data.splitlines(keepends=True),
+            new_data.splitlines(keepends=True),
+            fromfile=path,
+            tofile=path,
+            lineterm="",
+        )
+    )
+    with open(path, "w", encoding="utf-8") as f:
+        async for p in _write_chunked(f, new_data):
+            yield p
+    yield {
+        "status": "ok",
+        "message": f"Replaced {count} occurrence(s) in {path}",
+        "path": path,
+        "replacement_count": count,
+        "diff": diff_lines,
+    }
 
 
 BUILTIN_TOOL_METADATA: list[dict[str, Any]] = [
@@ -727,81 +561,151 @@ BUILTIN_TOOL_METADATA: list[dict[str, Any]] = [
         "_fn": bash_fn,
     },
     {
-        "name": "local_file_operator",
-        "display_name": "Local File Operator",
+        "name": "read_file",
+        "display_name": "Read File",
         "display_name_locale": json.dumps(
-            {"zh": "本地文件操作", "en": "Local File Operator"}, ensure_ascii=False
+            {"zh": "读取文件", "en": "Read File"}, ensure_ascii=False
         ),
         "description": (
-            "Read, write, append, edit (find/replace), delete, list directories, "
-            "create directories, move, copy, and check existence of local files and directories."
+            "Read the content of a text file, optionally paging by line range "
+            "(offset/limit). Large files are truncated by default - use offset "
+            "to read further pages. Use this instead of bash cat/type/head/tail/sed "
+            "for file reads."
         ),
         "description_locale": json.dumps(
             {
-                "zh": "对本地文件和目录进行读取、写入、追加、编辑（查找替换）、删除、列出目录、创建目录、移动、复制和检查存在性等操作。",
-                "en": (
-                    "Read, write, append, edit (find/replace), delete, list directories, "
-                    "create directories, move, copy, and check existence of local files and directories."
-                ),
+                "zh": "读取文本文件内容，支持按行分页（offset/limit）。大文件默认截断——使用 offset 继续读取下一页。读取文件请用本工具，不要用 bash 的 cat/type/head/tail/sed。",
+                "en": "Read the content of a text file, optionally paging by line range (offset/limit). Large files are truncated by default - use offset to read further pages. Use this instead of bash cat/type/head/tail/sed for file reads.",
             },
             ensure_ascii=False,
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "operation": {
-                    "type": "string",
-                    "description": "File operation to perform. One of: read, write, append, edit, delete, list_dir, mkdir, move, copy, exists.",
-                    "enum": [
-                        "read",
-                        "write",
-                        "append",
-                        "edit",
-                        "delete",
-                        "list_dir",
-                        "mkdir",
-                        "move",
-                        "copy",
-                        "exists",
-                    ],
-                },
                 "path": {
                     "type": "string",
-                    "description": "File or directory path to operate on. Required for: read, write, append, edit, delete, list_dir, mkdir, exists.",
+                    "description": "Path to the text file to read",
                 },
-                "content": {
-                    "type": "string",
-                    "description": "Content to write or append. Required for: write, append.",
-                },
-                "old_string": {
-                    "type": "string",
-                    "description": "The exact text to replace. Required for: edit.",
-                },
-                "new_string": {
-                    "type": "string",
-                    "description": "The replacement text. Used with old_string for: edit.",
-                },
-                "source": {
-                    "type": "string",
-                    "description": "Source path. Required for: move, copy.",
-                },
-                "destination": {
-                    "type": "string",
-                    "description": "Destination path. Required for: move, copy.",
-                },
-                "recursive": {
-                    "type": "boolean",
-                    "description": "Create parent directories recursively. Used with: mkdir.",
-                    "default": False,
+                "offset": {
+                    "type": "integer",
+                    "description": "1-based line number to start reading from (default: 1)",
+                    "default": 1,
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum number of entries to return. Used with: list_dir. 0 means no limit.",
-                    "default": 0,
+                    "description": "Maximum number of lines to return (default: 2000). Set to 0 for no limit (large files will consume many tokens).",
+                    "default": 2000,
                 },
             },
-            "required": ["operation"],
+            "required": ["path"],
         },
-        "_fn": local_file_operator_fn,
+        "_fn": read_file_fn,
+    },
+    {
+        "name": "write_file",
+        "display_name": "Write File",
+        "display_name_locale": json.dumps(
+            {"zh": "写入文件", "en": "Write File"}, ensure_ascii=False
+        ),
+        "description": (
+            "Create a new file or overwrite an existing file with the given "
+            "content. Parent directories are created automatically. Use this "
+            "instead of bash redirection (echo > file) for writing files."
+        ),
+        "description_locale": json.dumps(
+            {
+                "zh": "用给定内容创建新文件或覆盖已有文件。父目录会自动创建。写文件请用本工具，不要用 bash 重定向（echo > file）。",
+                "en": "Create a new file or overwrite an existing file with the given content. Parent directories are created automatically. Use this instead of bash redirection (echo > file) for writing files.",
+            },
+            ensure_ascii=False,
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path to the file to create or overwrite",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Full content to write to the file",
+                },
+            },
+            "required": ["path", "content"],
+        },
+        "_fn": write_file_fn,
+    },
+    {
+        "name": "append_file",
+        "display_name": "Append File",
+        "display_name_locale": json.dumps(
+            {"zh": "追加文件", "en": "Append File"}, ensure_ascii=False
+        ),
+        "description": (
+            "Append content to the end of an existing file. Use this instead of "
+            "bash '>>' redirection. If the file does not exist, use write_file "
+            "to create it first."
+        ),
+        "description_locale": json.dumps(
+            {
+                "zh": "将内容追加到已有文件末尾。追加请用本工具，不要用 bash 的 '>>' 重定向。若文件不存在，先用 write_file 创建。",
+                "en": "Append content to the end of an existing file. Use this instead of bash '>>' redirection. If the file does not exist, use write_file to create it first.",
+            },
+            ensure_ascii=False,
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path to the file to append to",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Content to append to the end of the file",
+                },
+            },
+            "required": ["path", "content"],
+        },
+        "_fn": append_file_fn,
+    },
+    {
+        "name": "edit_file",
+        "display_name": "Edit File",
+        "display_name_locale": json.dumps(
+            {"zh": "编辑文件", "en": "Edit File"}, ensure_ascii=False
+        ),
+        "description": (
+            "Replace exact text in an existing file (find-and-replace), reading "
+            "and writing in one call. If old_string is not found, use read_file "
+            "first and copy the exact text - whitespace and line endings must "
+            "match. Use this instead of sed/perl one-liners."
+        ),
+        "description_locale": json.dumps(
+            {
+                "zh": "在已有文件中做精确查找替换，一次调用完成读写。若 old_string 未命中，先用 read_file 查看真实内容再精确复制（空白和换行必须一致）。修改文件请用本工具，不要用 sed/perl 单行命令。",
+                "en": "Replace exact text in an existing file (find-and-replace), reading and writing in one call. If old_string is not found, use read_file first and copy the exact text - whitespace and line endings must match. Use this instead of sed/perl one-liners.",
+            },
+            ensure_ascii=False,
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path to the file to edit",
+                },
+                "old_string": {
+                    "type": "string",
+                    "description": "The exact text to replace (must match the file exactly, including whitespace and line endings)",
+                },
+                "new_string": {
+                    "type": "string",
+                    "description": "The replacement text",
+                },
+            },
+            "required": ["path", "old_string", "new_string"],
+        },
+        "_fn": edit_file_fn,
     },
 ]
