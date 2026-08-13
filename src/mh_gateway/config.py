@@ -39,6 +39,12 @@ class ConfigSchema(BaseModel):
     goal_max_rounds: int = 5
     timer_default_duration: str = "30m"
 
+    # ── Attachments ─────────────────────────────────
+    attachment_max_size_mb: int = 20
+    attachment_allowed_extensions: list[str] = Field(
+        default_factory=lambda: ["docx", "pptx", "md", "txt", "msg"]
+    )
+
     @property
     def database_url(self) -> str:
         return self.db_path

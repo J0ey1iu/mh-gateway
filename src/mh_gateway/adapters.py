@@ -535,6 +535,78 @@ class EvalResultRepository(Protocol):
     async def close(self) -> None: ...
 
 
+# ── Attachments ────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class AttachmentRecord:
+    """Metadata for one uploaded attachment.
+
+    ``session_id`` is empty until the attachment is used in a chat request
+    (:meth:`AttachmentStore.bind`), after which attachment tools and the
+    download endpoint can enforce session/user ownership.
+    """
+
+    file_id: str
+    file_name: str
+    file_size: int
+    content_type: str
+    user_id: str
+    session_id: str = ""
+    created_at: str = ""
+
+    def as_metadata(self) -> dict[str, Any]:
+        """The ``FileMetadata`` shape carried inside user message content
+        parts (matches ``minimal_harness.memory.FileMetadata``)."""
+        return {
+            "file_id": self.file_id,
+            "file_name": self.file_name,
+            "file_size": self.file_size,
+            "backend_type": "attachment",
+        }
+
+
+@runtime_checkable
+class AttachmentStore(Protocol):
+    """Persistent storage for user-uploaded attachment files.
+
+    The gateway is deployment-agnostic: each app (cloud / local) supplies
+    its own implementation. Attachment tools (``read_attachment``,
+    ``list_attachments``) and the upload/download APIs only talk to this
+    protocol, so a cloud deployment can back it with object storage while
+    the local app uses the filesystem — same engine, same behaviour.
+    """
+
+    async def save(self, record: AttachmentRecord, data: bytes) -> AttachmentRecord:
+        """Persist *record* + raw bytes; returns the stored record."""
+        ...
+
+    async def get(self, file_id: str) -> AttachmentRecord | None:
+        """Return the metadata record for *file_id*, or ``None``."""
+        ...
+
+    async def open(self, file_id: str) -> bytes | None:
+        """Return the raw bytes for *file_id*, or ``None`` if missing."""
+        ...
+
+    async def bind(self, file_id: str, session_id: str) -> bool:
+        """Record that *file_id* was attached to *session_id*.
+
+        Returns ``False`` when the file does not exist.
+        """
+        ...
+
+    async def list_for_session(self, session_id: str) -> list[AttachmentRecord]:
+        """All attachments bound to *session_id*."""
+        ...
+
+    async def delete(self, file_id: str) -> bool:
+        """Delete the attachment (metadata + bytes). Returns success."""
+        ...
+
+    async def close(self) -> None: ...
+
+
 # ── Tool Script Store ──────────────────────────────────────────────────────────
 
 
@@ -585,6 +657,8 @@ class ConfigProvider(Protocol):
 
 __all__ = [
     "AuthorizationProvider",
+    "AttachmentRecord",
+    "AttachmentStore",
     "ConfigProvider",
     "EvalResultRepository",
     "Feedback",

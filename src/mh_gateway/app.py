@@ -24,6 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from mh_gateway.adapters import (
     AuthorizationProvider,
+    AttachmentStore,
     EvalResultRepository,
     FeedbackRepository,
     LLMProviderService,
@@ -34,6 +35,7 @@ from mh_gateway.adapters import (
     ToolScriptStore,
     UserAuthenticator,
 )
+from mh_gateway.attachments import FileExtractor
 from minimal_harness.agent.runtime import (
     SystemPromptAssembler,
     SystemPromptProvider,
@@ -88,6 +90,10 @@ class GatewayAdapters:
     eval_results: EvalResultRepository | None = None
     tool_script_store: ToolScriptStore | None = None
     feedback: FeedbackRepository | None = None
+    attachments: AttachmentStore | None = None
+    # 部署侧注入的附件解析器（可覆盖/扩展 gateway 内置的 docx/pptx/md/txt/msg）。
+    # 选择时应用侧优先于内置默认：同扩展名可覆盖，新扩展名可新增。
+    attachment_extractors: list[FileExtractor] | None = None
     system_prompt_assembler: SystemPromptAssembler | None = None
     system_prompt_provider: SystemPromptProvider | None = None
     user_preference_provider: UserPreferenceProvider | None = None
