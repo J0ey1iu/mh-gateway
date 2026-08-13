@@ -195,7 +195,7 @@ async def run_agent(
                 model=agent_meta.get("model", ""),
                 llm_config=agent_meta.get("llm_config", {}),
             ),
-            max_iterations=10,
+            max_iterations=2000,
             emit_message_events=True,
         )
     except ValueError as e:
