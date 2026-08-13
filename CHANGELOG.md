@@ -9,6 +9,9 @@
   mh-incubator #58). Contract tests in `tests/test_session_contract.py`
   fail the suite if a future Memory protocol member goes missing again.
 
+- raise the one-shot agent run endpoint's `max_iterations` from 10 to
+  2000 to match the framework default (silent early stop on long runs).
+
 ## 0.1.2a2
 
 - feat: JSON metadata import/export for scene / agent / tool —
