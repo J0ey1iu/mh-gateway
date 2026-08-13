@@ -26,7 +26,7 @@ from mh_gateway.adapters import (
     has_broad_permission,
     match_permission,
 )
-from mh_gateway.services.runtime_service import _tool_binding
+from mh_gateway.services.runtime_service import _resolve_tool_binding
 
 logger = logging.getLogger("orchestration.agents")
 
@@ -153,7 +153,7 @@ async def run_agent(
             display_name=tool_meta.get("display_name", tool_name),
             description=tool_meta.get("description", ""),
             parameters=tool_meta.get("parameters", func.get("parameters", {})),
-            binding=await _tool_binding(
+            binding=await _resolve_tool_binding(
                 tool_meta,
                 tool_name,
                 request,
@@ -186,17 +186,24 @@ async def run_agent(
     factory = AgentFactory(
         llm_provider_resolver=_agent_llm_resolver,
     )
-    agent = factory.create(
-        AgentMetadata(
-            name=agent_name,
-            agent_type="simple",
-            provider=agent_meta.get("provider", "openai"),
-            model=agent_meta.get("model", ""),
-            llm_config=agent_meta.get("llm_config", {}),
-        ),
-        max_iterations=10,
-        emit_message_events=True,
-    )
+    try:
+        agent = factory.create(
+            AgentMetadata(
+                name=agent_name,
+                agent_type="simple",
+                provider=agent_meta.get("provider", "openai"),
+                model=agent_meta.get("model", ""),
+                llm_config=agent_meta.get("llm_config", {}),
+            ),
+            max_iterations=10,
+            emit_message_events=True,
+        )
+    except ValueError as e:
+        # Imported metadata may reference an unknown agent_type or an
+        # LLM provider that is not configured locally — report it
+        # cleanly instead of crashing with a 500.
+        logger.exception("run_agent build failed agent=%s", agent_name)
+        raise HTTPException(502, f"Agent runtime unavailable: {e}") from None
 
     system_prompt = body.get("system_prompt", "") or agent_meta.get("system_prompt", "")
 

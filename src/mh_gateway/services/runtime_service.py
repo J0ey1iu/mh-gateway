@@ -517,6 +517,60 @@ async def _tool_binding(
     )
 
 
+def _missing_implementation_binding(name: str) -> LocalToolBinding:
+    """Stub binding for tools whose implementation is not available locally.
+
+    Imported metadata (shared JSON) may describe a tool with no local
+    script and no endpoint — the tool stays registered and callable so
+    the agent can attempt it, but the call fails with a clear error at
+    execution time instead of crashing the runtime.
+    """
+
+    async def _no_impl(**kwargs: Any) -> AsyncIterator[Any]:
+        raise RuntimeError(
+            f"Tool '{name}' has no implementation on this instance: "
+            "it was imported as metadata only and has no endpoint_url or "
+            "local script. Configure the binding to use it."
+        )
+        yield  # pragma: no cover — marks this as an async generator
+
+    return LocalToolBinding(fn=_no_impl)
+
+
+async def _resolve_tool_binding(
+    meta: dict,
+    name: str,
+    request: Request | None = None,
+    identity: str = "",
+    outbound_auth: OutboundAuthProvider | None = None,
+    scenario_id: str = "",
+    agent_name: str = "",
+    verify_agent_tool_ssl: bool = False,
+) -> RemoteToolBinding | LocalToolBinding | ExternalScriptToolBinding:
+    """Resolve a tool binding, degrading to a failing stub when the tool has
+    no implementable binding (metadata-only imports).  The runtime must
+    never crash because a shared tool lacks a local implementation.
+    """
+    try:
+        return await _tool_binding(
+            meta,
+            name,
+            request=request,
+            identity=identity,
+            outbound_auth=outbound_auth,
+            scenario_id=scenario_id,
+            agent_name=agent_name,
+            verify_agent_tool_ssl=verify_agent_tool_ssl,
+        )
+    except ValueError as e:
+        logger.warning(
+            "tool.binding.missing name=%s reason=%s — registered as failing stub",
+            name,
+            e,
+        )
+        return _missing_implementation_binding(name)
+
+
 def _apply_permission_filter(
     names: set[str],
     user_perms: list[str] | None,
@@ -675,7 +729,7 @@ async def create_runtime(
                     tool_meta.get("description_locale")
                 ),
                 parameters=params,
-                binding=await _tool_binding(
+                binding=await _resolve_tool_binding(
                     tool_meta,
                     tname,
                     request,

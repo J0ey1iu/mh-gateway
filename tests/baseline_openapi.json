@@ -2573,6 +2573,200 @@
         }
       }
     },
+    "/api/v1/management/import/templates/{entity_type}": {
+      "get": {
+        "tags": [
+          "management"
+        ],
+        "summary": "Download Import Template",
+        "description": "Download a JSON import template for scene / agent / tool.",
+        "operationId": "download_import_template_api_v1_management_import_templates__entity_type__get",
+        "parameters": [
+          {
+            "name": "entity_type",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entity Type"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/management/import": {
+      "post": {
+        "tags": [
+          "management"
+        ],
+        "summary": "Import Entities",
+        "description": "Import scene / agent / tool entities from JSON files (batch, atomic).\n\nEvery file must pass syntax + structure validation, otherwise the\nwhole batch is rejected and nothing is created.  Relationship fields\n(scene.agents, agent.tool_names) are not importable.",
+        "operationId": "import_entities_api_v1_management_import_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_entities_api_v1_management_import_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Import Entities Api V1 Management Import Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/management/export/{entity_type}": {
+      "get": {
+        "tags": [
+          "management"
+        ],
+        "summary": "Export Entities",
+        "description": "Batch-export scene / agent / tool metadata as a JSON array file.\n\n``ids`` selects specific entities (by scene id / agent or tool name);\nwithout it every entity of that type is exported.  The file is the\nbatch-import format: a JSON array of importable entity objects.",
+        "operationId": "export_entities_api_v1_management_export__entity_type__get",
+        "parameters": [
+          {
+            "name": "entity_type",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entity Type"
+            }
+          },
+          {
+            "name": "ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated keys; empty = all",
+              "title": "Ids"
+            },
+            "description": "Comma-separated keys; empty = all"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/management/export/{entity_type}/{key}": {
+      "get": {
+        "tags": [
+          "management"
+        ],
+        "summary": "Export Entity",
+        "description": "Export a single scene / agent / tool as one importable JSON file.",
+        "operationId": "export_entity_api_v1_management_export__entity_type___key__get",
+        "parameters": [
+          {
+            "name": "entity_type",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entity Type"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/management/tools/upload-batch": {
       "post": {
         "tags": [
@@ -3974,6 +4168,23 @@
           "llm_model"
         ],
         "title": "BatchEvalRequestSchema"
+      },
+      "Body_import_entities_api_v1_management_import_post": {
+        "properties": {
+          "files": {
+            "items": {
+              "type": "string",
+              "contentMediaType": "application/octet-stream"
+            },
+            "type": "array",
+            "title": "Files"
+          }
+        },
+        "type": "object",
+        "required": [
+          "files"
+        ],
+        "title": "Body_import_entities_api_v1_management_import_post"
       },
       "Body_upload_tool_script_api_v1_management_tools_upload_post": {
         "properties": {
