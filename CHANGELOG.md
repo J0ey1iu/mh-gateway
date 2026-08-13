@@ -1,5 +1,20 @@
 # Change Log
 
+## 0.1.2a2
+
+- feat: JSON metadata import/export for scene / agent / tool —
+  management endpoints to dump and restore registry metadata as JSON
+  (mh-incubator #54).
+- feat: split the monolithic `local_file_operator` into standalone
+  file tools (mh-incubator #55) — `read_file` (line-based pagination
+  via offset/limit, default 2000-line truncation so large files no
+  longer flood the context), `write_file` / `append_file`
+  (path+content enforced by the schema) and `edit_file` (exact
+  find/replace, old_string/new_string required); each tool description
+  carries routing rules preferring the dedicated file tool over
+  `bash`, and `bash` gains the reverse hint. Dropped
+  list_dir/glob/search/file_ops operations are covered by `bash`.
+
 ## 0.1.2a1
 
 - feat(metrics): full paginated rankings, daily trend, display-name
