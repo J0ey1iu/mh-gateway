@@ -1,6 +1,6 @@
 # Change Log
 
-## Unreleased
+## 0.1.2a3
 
 - fix: `SimpleSession` now subclasses `ConversationMemory` and the
   `Session` protocol inherits `Memory`, so the session's memory surface
@@ -16,6 +16,39 @@
   end goal-controller runs as DONE — they now surface as errors, so a
   long loop can no longer "mysteriously stop" with no signal (mh-incubator
   #58).
+
+- feat: attachment upload with docx/pptx/md/txt/msg extraction
+  (mh-incubator #36) — `AttachmentStore` protocol + `AttachmentRecord`
+  (app-side implementations), `read_attachment` / `list_attachments`
+  tools with metadata in `attachment_tools.json` (import-ready, zh/en
+  i18n), stdlib-only extractors (docx/pptx via ZIP+XML, msg via OLE2
+  reader), `POST/GET /api/v1/attachments` (size/type checks, UTF-8
+  filenames); the chat request accepts attachments, validates
+  ownership, binds them to the session and injects attachment tools
+  only when attachments are present; `session_id` contextvar.
+
+- feat: announcements bulletin (mh-incubator #57, feature 2) —
+  `AnnouncementRecord` / `AnnouncementStats` / `AnnouncementStore`
+  protocols (gateway owns the contract, storage lives in deployments);
+  admin API (CRUD / repush / stats behind `manage:announcement:*`);
+  user API (visible / read / consent with `Literal[agree, decline]`);
+  paginated history `GET /announcements?page=&page_size=`.
+
+- fix(metrics): derive the tool name from the per-call event, not
+  shared state (mh-incubator #62) — `MetricsPersistenceMiddleware`
+  kept `_tool_name` on the instance while the harness runs the turn's
+  tool calls concurrently, so concurrent calls clobbered each other's
+  name (records landed under the wrong name or as "unknown"). The name
+  is now read from the `tool_call` passed to `on_tool_end` /
+  `on_tool_error`.
+
+- feat(chat): detach runs from the SSE connection (mh-incubator #63) —
+  runs survive client disconnect; the cancel endpoint writes a shared
+  cancel marker polled by a per-run watcher (works across multi-POD
+  workers); the sessions list surfaces real running/idle status from
+  the shared store; the finalizer persists and releases the session
+  lock even after disconnect, with a timeout fallback so a stuck run
+  can never hold the lock forever.
 
 ## 0.1.2a2
 
