@@ -52,8 +52,6 @@ class MetricsPersistenceMiddleware(Middleware):
         self._provider = provider
         self._model = model
         self._llm_start_ts: float | None = None
-        self._tool_start_ts: float | None = None
-        self._tool_name: str = ""
 
     async def on_llm_start(self, messages: list[dict[str, Any]], tools: Any) -> None:
         self._llm_start_ts = time.monotonic()
@@ -92,17 +90,17 @@ class MetricsPersistenceMiddleware(Middleware):
         except Exception:
             logger.exception("Failed to persist LLM metrics record")
 
-    async def on_tool_start(self, tool_call: ToolCall) -> None:
-        self._tool_start_ts = time.monotonic()
-        self._tool_name = tool_call.get("function", {}).get("name", "unknown")
-
+    # 注意：不维护任何 per-tool 实例状态。同一回合的多个工具调用由
+    # harness 并发执行（asyncio.create_task per call），共享状态会互相
+    # 串名/串时长（issue #62 的 "unknown" 幽灵条目）。名字从
+    # on_tool_end/on_tool_error 收到的 tool_call 直接取，天然并发安全。
     async def on_tool_end(self, tool_call: ToolCall, result: Any) -> None:
-        await self._record_tool("ok")
+        await self._record_tool(tool_call, "ok")
 
     async def on_tool_error(self, tool_call: ToolCall, error: Exception) -> None:
-        await self._record_tool("error")
+        await self._record_tool(tool_call, "error")
 
-    async def _record_tool(self, status: str) -> None:
+    async def _record_tool(self, tool_call: ToolCall, status: str) -> None:
         repo = get_metrics_repo()
         if repo is None:
             return
@@ -114,14 +112,13 @@ class MetricsPersistenceMiddleware(Middleware):
                     session_id=self._session_id,
                     agent_name=self._agent_id,
                     scenario_id=self._scenario_id,
-                    tool_name=self._tool_name or "unknown",
+                    tool_name=tool_call.get("function", {}).get("name", "")
+                    or "unknown",
                     status=status,
                 )
             )
         except Exception:
             logger.exception("Failed to persist tool metrics record")
-        finally:
-            self._tool_name = ""
 
     async def on_agent_end(self, event: AgentEnd) -> None:
         # No-op reserved for future agent-level stats; hook exists so
