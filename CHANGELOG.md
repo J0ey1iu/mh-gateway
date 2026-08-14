@@ -1,5 +1,25 @@
 # Change Log
 
+## 0.1.2a5
+
+- fix: bash tool timeout now kills the whole process tree
+  (`timeout_ms` renamed to `timeout` in seconds, default 300; on
+  timeout `taskkill /T /F` on Windows, `os.killpg` with
+  `start_new_session` on POSIX) so grandchildren can no longer hold
+  the pipes open and hang `process.wait()`; all cleanup awaits are
+  bounded (2s caps).
+- fix: remove the agent-level no-progress watchdog
+  (`_await_run_no_stall`) — the lower layers own their timeouts (LLM
+  stall detection + tool timeouts) and their errors already propagate
+  to the agent; a coarse watchdog preempted graceful tool timeout
+  recovery.
+- fix: handoff (`_handoff_fn`) forwards reasoning chunks so the parent
+  sees progress during sub-agent thinking (no more false idle kills).
+- chore: delete the unused HTTP handoff/execute endpoint and
+  regenerate the OpenAPI route baseline.
+- deps: minimal-harness>=0.8.1a3 -> >=0.8.1a4 (chunk-level stream
+  stall watchdog).
+
 ## 0.1.2a4
 
 - fix: chat runs are no longer force-cancelled after a fixed 60s total
