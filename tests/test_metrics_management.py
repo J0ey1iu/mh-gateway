@@ -383,6 +383,35 @@ class TestMetricsPersistenceMiddleware:
         finally:
             set_metrics_repo(None)
 
+    @pytest.mark.asyncio
+    async def test_concurrent_tool_calls_recorded_separately(self):
+        # 回归（issue #62）：harness 并发执行同一回合的多个工具调用，
+        # 中间件不能再用共享实例状态——否则名字互相串记并产生
+        # "unknown" 幽灵条目。每个调用必须按自己的名字独立落库。
+        from minimal_harness.types import ToolCall
+
+        repo = InMemoryMetricsRepository()
+        set_metrics_repo(repo)
+        try:
+            mw = MetricsPersistenceMiddleware(user_id="u1", agent_id="a1")
+
+            async def run(name: str, delay: float) -> None:
+                tc: ToolCall = {
+                    "id": name,
+                    "type": "function",
+                    "function": {"name": name, "arguments": "{}"},
+                }
+                await mw.on_tool_start(tc)
+                await asyncio.sleep(delay)
+                await mw.on_tool_end(tc, "ok")
+
+            await asyncio.gather(run("web_search", 0.01), run("calculator", 0.05))
+            page = await repo.query_ranking("tools")
+            assert page.total == 2
+            assert {i.key for i in page.items} == {"web_search", "calculator"}
+        finally:
+            set_metrics_repo(None)
+
 
 class _DenyMetricsProvider:
     """Provider that grants everything except manage:metrics:*."""
@@ -665,7 +694,9 @@ class TestManagementMetricsAPI:
                 }
             )
         )
-        app = _make_app(_MockProvider(), lifespan_hooks=[_metrics_hook(repo)], metadata=metadata)
+        app = _make_app(
+            _MockProvider(), lifespan_hooks=[_metrics_hook(repo)], metadata=metadata
+        )
         with TestClient(app, raise_server_exceptions=False) as c:
             # zh locale via Accept-Language
             r = c.get(
