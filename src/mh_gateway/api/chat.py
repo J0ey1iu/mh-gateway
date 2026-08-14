@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import sys
 from typing import Any, AsyncIterator
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -34,6 +36,144 @@ from mh_gateway.services.runtime_service import (
 logger = logging.getLogger("orchestration.chat")
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
+
+# ── Detached runs ────────────────────────────────────────────────────────────
+#
+# A chat run outlives the SSE connection that started it: closing the page
+# must NOT stop the task (issue #63).  A plain client disconnect simply
+# detaches the stream and the task keeps running to completion (see
+# ``_finalize_run``); the only way to stop it is the explicit
+# ``POST /{memory_id}/cancel`` endpoint, which writes a cancel marker into
+# the shared session store that ``_watch_cancel`` polls — one mechanism,
+# correct across single- and multi-process deployments.
+
+
+async def _finalize_run(
+    memory_id: str,
+    task: asyncio.Task,
+    session: Any,
+    store: SessionRepository,
+    lock: asyncio.Lock,
+    message: str,
+) -> None:
+    """Wait for the run to finish, persist everything, then release the lock.
+
+    Runs as an independent background task, so it survives the SSE
+    connection being closed or cancelled.  The session lock is held for the
+    whole run (not just the connection), keeping concurrent chats from
+    racing on the same session.
+    """
+    try:
+        try:
+            # 超时兜底：任务若卡死，不能让它永久持有会话锁和 running 状态
+            # —— 超时后强制 cancel，然后照常收尾（memory 内容已固定）。
+            await asyncio.wait_for(task, timeout=RUN_FINALIZE_TIMEOUT)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            logger.error(
+                "chat.run.timeout session=%s trace=%s — cancelling",
+                memory_id,
+                get_current_trace_id(),
+            )
+            task.cancel()
+        except Exception:
+            logger.exception("chat.run.error session=%s", memory_id)
+        else:
+            logger.info(
+                "chat.run.finished session=%s trace=%s",
+                memory_id,
+                get_current_trace_id(),
+            )
+        try:
+            if not session.title:
+                session.title = message[:80]
+            extra = {"title": session.title} if session.title else {}
+            await store.save_memory(session.memory, memory_id, extra=extra)
+        except Exception:
+            logger.exception("chat.persist.error session=%s", memory_id)
+        else:
+            logger.info(
+                "chat.persist.ok session=%s messages=%d trace=%s",
+                memory_id,
+                len(session.get_all_messages()),
+                get_current_trace_id(),
+            )
+        try:
+            # Mark AFTER save_memory: the list's "running" flag stays set until
+            # everything is on disk, so the frontend's running→idle transition
+            # can safely refetch the completed history.
+            await store.mark_run_finished(memory_id)
+        except Exception:
+            logger.exception("chat.status.error session=%s phase=finished", memory_id)
+    finally:
+        await release_session_lock(memory_id, lock)
+
+
+# Cancel-marker poll interval: a cancel request can land on any worker in a
+# multi-POD deployment; the worker owning the run picks it up from the shared
+# store within this window.  ponytail: fixed 1s, tune if cancel latency matters.
+CANCEL_POLL_INTERVAL = 1.0
+# After issuing task.cancel(), how long to wait for the run to actually end
+# before re-cancelling.  asyncio cancellation is a request, not a guarantee:
+# a run stuck in a synchronous section responds late, so the watcher insists
+# until the task is done instead of giving up after one cancel.
+CANCEL_GRACE_SECONDS = 5.0
+# How long the finalizer waits for the run before force-cancelling and then
+# releasing the session lock regardless — a stuck run must never hold the
+# lock / running status forever.
+RUN_FINALIZE_TIMEOUT = 60.0
+
+
+async def _watch_cancel(
+    memory_id: str,
+    task: asyncio.Task,
+    store: SessionRepository,
+) -> None:
+    """Poll the shared store for a cancel request and stop the run.
+
+    Lives as long as the run task: cancelled via a done-callback once the
+    task finishes, so it never needs explicit teardown.
+
+    Scheduling note: ``asyncio.sleep`` is a cooperative “at least” timer —
+    a busy event loop stretches the interval, but every await point in this
+    codebase yields, so the watcher always runs periodically; only a
+    permanently blocked loop would starve it (none here).
+    """
+    try:
+        while not task.done():
+            try:
+                requested = await store.is_cancel_requested(memory_id)
+            except Exception:
+                logger.exception("chat.cancel.watch.error session=%s", memory_id)
+                await asyncio.sleep(CANCEL_POLL_INTERVAL)
+                continue
+            if not requested:
+                await asyncio.sleep(CANCEL_POLL_INTERVAL)
+                continue
+
+            logger.info(
+                "chat.cancel.effective session=%s trace=%s",
+                memory_id,
+                get_current_trace_id(),
+            )
+            task.cancel()
+            # Insist the run actually ends: re-cancel until the task is done.
+            # (shield so a timeout on this watcher doesn't kill the run task.)
+            while not task.done():
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(task), timeout=CANCEL_GRACE_SECONDS
+                    )
+                    break
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "chat.cancel.slow session=%s trace=%s — re-cancelling",
+                        memory_id,
+                        get_current_trace_id(),
+                    )
+                    task.cancel()
+            return
+    except asyncio.CancelledError:
+        pass
 
 
 class ChatRequest(BaseModel):
@@ -73,6 +213,34 @@ async def _get_scenario_for_session(
     from mh_gateway.api.scenarios import _get_scenario
 
     return await _get_scenario(request, scenario_id)
+
+
+@router.post("/{memory_id}/cancel")
+async def cancel_chat(
+    request: Request,
+    memory_id: str,
+    user_id: str = Depends(resolve_request_identity),
+):
+    """Explicitly stop a running chat.
+
+    Closing the page only detaches the SSE stream — the run continues
+    (issue #63).  This endpoint is the one way to actually stop it.
+    """
+    store = await get_session_store(request)
+    session = await store.get_session(memory_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    logger.info("chat.cancel.request session=%s user=%s", memory_id, user_id)
+    try:
+        # 写入共享取消标记：任务所在 worker（任意 POD）的 watcher 会在一个
+        # 轮询周期内发现并停止它（issue #63）。
+        await store.request_cancel(memory_id)
+    except Exception:
+        logger.exception("chat.cancel.marker.error session=%s", memory_id)
+    return {"ok": True}
 
 
 @router.post("/{memory_id}")
@@ -182,11 +350,14 @@ async def chat(
                     trace_id=trace_id,
                     controller_type=body.controller,
                     controller_config=body.controller_config,
+                    lock=lock,
                 ):
                     yield event
             finally:
+                # Session lock is owned by the run (released by
+                # ``_finalize_run``), not by the connection: a client
+                # disconnect must not unlock a still-running task.
                 clear_current_session_id()
-                await release_session_lock(memory_id, lock)
 
         return StreamingResponse(
             _stream_with_lock(),
@@ -212,6 +383,7 @@ async def _stream_events(
     agent_name: str,
     tool_names: list[str],
     store: SessionRepository,
+    lock: asyncio.Lock,
     locale: str = "",
     scenario_id: str = "",
     trace_id: str = "",
@@ -219,7 +391,7 @@ async def _stream_events(
     controller_config: dict[str, Any] | None = None,
 ) -> AsyncIterator[str]:
     task = None
-    stop_event = None
+    finalizer: asyncio.Task | None = None
 
     try:
         runtime, agent_registry, tool_registry, _ = await create_runtime(
@@ -244,7 +416,7 @@ async def _stream_events(
             for meta in attachments
         )
 
-        task, stop_event, queue = await runtime.run(
+        task, _stop_event, queue = await runtime.run(
             user_input=user_input,
             agent_metadata_id=agent_name,
             memory_id=memory_id,
@@ -256,6 +428,43 @@ async def _stream_events(
             ),
             controller_type=controller_type,
             controller_config=controller_config,
+        )
+        logger.info(
+            "chat.run.start session=%s user=%s agent=%s trace=%s",
+            memory_id,
+            user_id,
+            agent_name,
+            trace_id,
+        )
+
+        # Detach the run's lifecycle from this SSE connection: a background
+        # task waits for the run, persists the session and releases the lock
+        # even if this generator is cancelled/closed (page closed).  The only
+        # way to stop the run is the cancel endpoint, which writes a shared
+        # marker that ``_watch_cancel`` polls.
+        try:
+            await store.mark_run_started(memory_id)
+        except Exception:
+            logger.exception("chat.status.error session=%s phase=started", memory_id)
+        else:
+            logger.info(
+                "chat.run.status session=%s status=running trace=%s",
+                memory_id,
+                trace_id,
+            )
+        cancel_watcher = asyncio.create_task(_watch_cancel(memory_id, task, store))
+        # Keep the watcher referenced until the run ends: the done-callback
+        # cancels it, so it never outlives the task.
+        task.add_done_callback(lambda _t: cancel_watcher.cancel())
+        finalizer = asyncio.create_task(
+            _finalize_run(
+                memory_id,
+                task,
+                session,
+                store,
+                lock,
+                message,
+            )
         )
 
         while True:
@@ -292,25 +501,36 @@ async def _stream_events(
             )
             yield format_sse(event_type, payload)
     except Exception as exc:
-        logger.exception("Chat stream error")
+        logger.exception("chat.stream.error session=%s", memory_id)
         detail = str(exc) or type(exc).__name__
         yield format_sse(
             "Error",
             {"message": f"{type(exc).__name__}: {detail}"},
         )
     finally:
-        if stop_event is not None:
-            stop_event.set()
-        if task is not None:
-            await task
-
-        if not session.title:
-            session.title = message[:80]
-
-        extra = {"title": session.title} if session.title else {}
-        try:
-            await store.save_memory(session.memory, memory_id, extra=extra)
-        except Exception:
-            logger.exception("Failed to persist session messages")
+        exc = sys.exc_info()[1]
+        # Normal end (or handled error): make sure everything is persisted
+        # before sending ``done``, so a refresh right after done sees it.
+        # On disconnect (GeneratorExit / CancelledError unwinding) skip the
+        # await — the finalizer task completes on its own.
+        if finalizer is not None:
+            if exc is None:
+                logger.info("chat.stream.done session=%s trace=%s", memory_id, trace_id)
+                await finalizer
+            else:
+                # 连接断开（关页/刷新/断网）：任务 detach 继续后台跑完。
+                logger.info(
+                    "chat.stream.detached session=%s reason=%s trace=%s",
+                    memory_id,
+                    type(exc).__name__,
+                    trace_id,
+                )
+        else:
+            # The run never started (setup error): no background task owns
+            # the lock, release it here.  (release_session_lock's lock
+            # release is synchronous, so an in-flight cancel cannot leave
+            # the lock permanently held.)
+            if lock.locked():
+                await release_session_lock(memory_id, lock)
 
     yield format_sse("done", {})

@@ -45,6 +45,47 @@
         }
       }
     },
+    "/api/v1/chat/{memory_id}/cancel": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Cancel Chat",
+        "description": "Explicitly stop a running chat.\n\nClosing the page only detaches the SSE stream \u2014 the run continues\n(issue #63).  This endpoint is the one way to actually stop it.",
+        "operationId": "cancel_chat_api_v1_chat__memory_id__cancel_post",
+        "parameters": [
+          {
+            "name": "memory_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Memory Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/chat/{memory_id}": {
       "post": {
         "tags": [
