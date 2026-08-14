@@ -1184,65 +1184,6 @@
         }
       }
     },
-    "/api/v1/tools/handoff/execute": {
-      "post": {
-        "tags": [
-          "runtime_tools"
-        ],
-        "summary": "Handoff Execute",
-        "operationId": "handoff_execute_api_v1_tools_handoff_execute_post",
-        "parameters": [
-          {
-            "name": "Accept-Language",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Accept-Language"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true,
-                "title": "Body"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/feedback": {
       "get": {
         "tags": [
@@ -5564,7 +5505,7 @@
     },
     {
       "name": "runtime_tools",
-      "description": "\u8fd0\u884c\u65f6\u5de5\u5177\u6267\u884c\u3002Agent \u8fd0\u884c\u65f6\u8c03\u7528\u7684\u5185\u7f6e\u5de5\u5177\uff0c\u5305\u62ec `discover_agents`\u3001`handoff` \u7b49\u3002"
+      "description": "\u8fd0\u884c\u65f6\u5de5\u5177\u6267\u884c\u3002Agent \u8fd0\u884c\u65f6\u8c03\u7528\u7684\u5185\u7f6e\u5de5\u5177\uff0c\u5305\u62ec `discover_agents` \u7b49\u3002"
     },
     {
       "name": "tool-generator",
