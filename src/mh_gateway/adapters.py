@@ -607,6 +607,119 @@ class AttachmentStore(Protocol):
     async def close(self) -> None: ...
 
 
+# ── Announcements ─────────────────────────────────────────────────────────────
+
+
+@dataclass
+class AnnouncementRecord:
+    """One bulletin/announcement pushed to users by an administrator.
+
+    ``consent_required`` turns the user-side interaction into an explicit
+    agree/decline decision (e.g. privacy policy) instead of a plain read.
+    """
+
+    announcement_id: str
+    title: str
+    body: str
+    consent_required: bool = False
+    active: bool = True
+    created_at: str = ""
+    pushed_at: str = ""
+    pushed_by: str = ""
+
+
+@dataclass
+class AnnouncementStats:
+    """Coverage statistics for one announcement.
+
+    ``total_users`` comes from the app-side user registry (the deployment
+    owns user data); a single-user local app trivially reports 1.
+    """
+
+    read_count: int = 0
+    agree_count: int = 0
+    decline_count: int = 0
+    total_users: int = 0
+
+
+@runtime_checkable
+class AnnouncementStore(Protocol):
+    """Persistent storage for announcements and their per-user interactions.
+
+    The gateway is deployment-agnostic: each app (cloud / local) supplies
+    its own implementation.  Users, read states, and consent decisions all
+    live in the deployment's store — the gateway only defines the contract
+    and the API surface (list history, read counts, …).
+    """
+
+    # ── Admin (requires ``manage:announcement:*``) ──
+
+    async def list_announcements(
+        self, page: int = 1, page_size: int = 20
+    ) -> tuple[list[AnnouncementRecord], int]:
+        """Announcements (push history), newest first.
+
+        Returns ``(items, total)``; ``page_size <= 0`` means "all".
+        """
+        ...
+
+    async def get_announcement(
+        self, announcement_id: str
+    ) -> AnnouncementRecord | None: ...
+
+    async def create_announcement(
+        self, announcement: AnnouncementRecord
+    ) -> AnnouncementRecord:
+        """Persist a new announcement (must carry a fresh ``announcement_id``)."""
+        ...
+
+    async def update_announcement(
+        self, announcement: AnnouncementRecord
+    ) -> AnnouncementRecord:
+        """Overwrite an existing announcement; returns the stored record."""
+        ...
+
+    async def delete_announcement(self, announcement_id: str) -> bool:
+        """Delete the announcement and all its interaction records."""
+        ...
+
+    async def repush_announcement(self, announcement_id: str, pushed_by: str) -> bool:
+        """Re-push an announcement: bump ``pushed_at`` and clear every user's
+        read/consent state so it surfaces again."""
+        ...
+
+    async def announcement_stats(self, announcement_id: str) -> AnnouncementStats:
+        """Coverage: how many users read / agreed / declined / total."""
+        ...
+
+    # ── User (admin included — admins see their own pushes) ──
+
+    async def visible_announcements(self, user_id: str) -> list[AnnouncementRecord]:
+        """Announcements the user must still act on: not read, and for
+        consent announcements not yet **agreed**.
+
+        A declined consent announcement stays visible — there is no
+        point-to-point push, so the user faces it again on the next visit
+        until they agree (or the admin deactivates it).
+        """
+        ...
+
+    async def mark_read(self, announcement_id: str, user_id: str) -> bool:
+        """Record that the user read the announcement. Returns False when
+        the announcement does not exist."""
+        ...
+
+    async def record_consent(
+        self, announcement_id: str, user_id: str, decision: str
+    ) -> bool:
+        """Record an agree/decline decision (``decision`` is
+        ``"agree"`` or ``"decline"``). Returns False when the
+        announcement does not exist."""
+        ...
+
+    async def close(self) -> None: ...
+
+
 # ── Tool Script Store ──────────────────────────────────────────────────────────
 
 
@@ -656,6 +769,9 @@ class ConfigProvider(Protocol):
 
 
 __all__ = [
+    "AnnouncementRecord",
+    "AnnouncementStats",
+    "AnnouncementStore",
     "AuthorizationProvider",
     "AttachmentRecord",
     "AttachmentStore",
