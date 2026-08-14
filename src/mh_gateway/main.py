@@ -277,6 +277,18 @@ class _MemorySessionStore(SessionRepository):
     def get_messages_as_items(self, session: Any) -> list[dict]:
         return []
 
+    async def mark_run_started(self, session_id: str) -> None:  # noqa: ARG002
+        return None
+
+    async def mark_run_finished(self, session_id: str) -> None:  # noqa: ARG002
+        return None
+
+    async def request_cancel(self, session_id: str) -> None:  # noqa: ARG002
+        return None
+
+    async def is_cancel_requested(self, session_id: str) -> bool:  # noqa: ARG002
+        return False
+
     async def healthcheck(self) -> None:
         return None
 

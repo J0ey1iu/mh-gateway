@@ -12,7 +12,10 @@ from mh_gateway.api.dependencies import (
 )
 from mh_gateway.adapters import LLMResolveSpec
 from mh_gateway.api.locale import parse_locale, resolve_display_name, resolve_locale
-from minimal_harness.agent._compaction import build_chat_payload, _resolve_localised_prompt
+from minimal_harness.agent._compaction import (
+    build_chat_payload,
+    _resolve_localised_prompt,
+)
 from minimal_harness.types import AgentMetadata
 from mh_gateway.services.database import get_session_store
 from mh_gateway.services.runtime_service import (
@@ -51,6 +54,9 @@ async def list_sessions(
             "agent_name": s["agent_name"],
             "user_id": s["user_id"],
             "scenario_id": s["scenario_id"],
+            # 运行状态来自共享存储（store.mark_run_started/finished）：
+            # 多 POD 部署下任何 worker 的列表都能看到真实状态（issue #63）。
+            "status": s["status"],
             "display_name": resolve_display_name(
                 s["agent_name"],
                 s.get("display_name_locale"),
