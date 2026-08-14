@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+import time
 from typing import Any, AsyncIterator
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -64,25 +65,25 @@ async def _finalize_run(
     racing on the same session.
     """
     try:
-        try:
-            # 超时兜底：任务若卡死，不能让它永久持有会话锁和 running 状态
-            # —— 超时后强制 cancel，然后照常收尾（memory 内容已固定）。
-            await asyncio.wait_for(task, timeout=RUN_FINALIZE_TIMEOUT)
-        except (asyncio.TimeoutError, asyncio.CancelledError):
-            logger.error(
-                "chat.run.timeout session=%s trace=%s — cancelling",
-                memory_id,
-                get_current_trace_id(),
-            )
-            task.cancel()
-        except Exception:
-            logger.exception("chat.run.error session=%s", memory_id)
-        else:
-            logger.info(
-                "chat.run.finished session=%s trace=%s",
-                memory_id,
-                get_current_trace_id(),
-            )
+        # 无进展兜底：run 若长时间不产出事件（LLM 流断、死锁等）视为卡死，
+        # 强制 cancel 后照常收尾（memory 内容已固定）。按总时长一刀切会误杀
+        # 正常的长推理（issue #68），所以只按心跳是否停滞判定。
+        await _await_run_no_stall(task, memory_id)
+    except asyncio.CancelledError:
+        logger.warning(
+            "chat.run.cancelled session=%s trace=%s — cancelling run task",
+            memory_id,
+            get_current_trace_id(),
+        )
+        task.cancel()
+    except Exception:
+        logger.exception("chat.run.error session=%s", memory_id)
+    else:
+        logger.info(
+            "chat.run.finished session=%s trace=%s",
+            memory_id,
+            get_current_trace_id(),
+        )
         try:
             if not session.title:
                 session.title = message[:80]
@@ -117,10 +118,49 @@ CANCEL_POLL_INTERVAL = 1.0
 # a run stuck in a synchronous section responds late, so the watcher insists
 # until the task is done instead of giving up after one cancel.
 CANCEL_GRACE_SECONDS = 5.0
-# How long the finalizer waits for the run before force-cancelling and then
-# releasing the session lock regardless — a stuck run must never hold the
-# lock / running status forever.
-RUN_FINALIZE_TIMEOUT = 60.0
+# How long a run may go without producing any event before the finalizer
+# considers it stuck and force-cancels it (releasing the lock / running
+# status regardless).  A fixed total-duration cap is wrong: long reasoning
+# calls legitimately stream chunks for minutes and were killed mid-stream
+# (issue #68) — only silence counts as stuck.
+RUN_IDLE_TIMEOUT = 120.0
+# How often the finalizer checks the run's heartbeat.
+RUN_IDLE_POLL = 1.0
+
+
+async def _await_run_no_stall(task: asyncio.Task, memory_id: str) -> None:
+    """Wait for *task*; cancel it if it stops producing events.
+
+    The run task carries a ``progress`` heartbeat (a ``{"last": monotonic}``
+    dict attached by ``Runtime.run``) that is refreshed on every event it
+    emits, so "stuck" means "no event for ``RUN_IDLE_TIMEOUT`` seconds" —
+    never "ran longer than X seconds".
+    """
+    while not task.done():
+        if time.monotonic() - task.progress["last"] >= RUN_IDLE_TIMEOUT:  # type: ignore[attr-defined]
+            logger.error(
+                "chat.run.idle session=%s trace=%s — no progress for %.0fs, cancelling",
+                memory_id,
+                get_current_trace_id(),
+                RUN_IDLE_TIMEOUT,
+            )
+            task.cancel()
+            # Insist the run actually ends before persisting: asyncio
+            # cancellation is a request, not a guarantee.
+            while not task.done():
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(task), timeout=CANCEL_GRACE_SECONDS
+                    )
+                    return
+                except asyncio.TimeoutError:
+                    task.cancel()
+                except asyncio.CancelledError:
+                    # The run ended on cancel (shield forwards the task's
+                    # CancelledError) — stop insisting.
+                    return
+            return
+        await asyncio.sleep(RUN_IDLE_POLL)
 
 
 async def _watch_cancel(

@@ -1,5 +1,17 @@
 # Change Log
 
+## 0.1.2a4
+
+- fix: chat runs are no longer force-cancelled after a fixed 60s total
+  duration — long reasoning calls were killed mid-stream with
+  "LLM call interrupted" / "Agent completed before tool finished"
+  (mh-incubator #68).  The run finalizer now watches the task's
+  `progress` heartbeat and only cancels when the run stops producing
+  events for `RUN_IDLE_TIMEOUT` (120s), so legitimate long runs keep
+  the session lock until they finish.
+- deps: minimal-harness>=0.8.1a2 -> >=0.8.1a3 (run task `progress`
+  heartbeat contract).
+
 ## 0.1.2a3
 
 - fix: `SimpleSession` now subclasses `ConversationMemory` and the
