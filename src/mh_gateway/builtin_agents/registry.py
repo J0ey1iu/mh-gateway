@@ -157,6 +157,8 @@ async def _handoff_fn(
     result_text = ""
     llm_buf: list[str] = []
     llm_emitted = 0
+    reasoning_buf: list[str] = []
+    reasoning_emitted = 0
     try:
         runtime, _agent_registry, _tool_registry, _ = await create_runtime(
             request=request,
@@ -223,6 +225,10 @@ async def _handoff_fn(
             elif isinstance(event, AgentStart):
                 yield {"status": "progress", "type": "agent_start"}
             elif isinstance(event, LLMStart):
+                llm_buf = []
+                llm_emitted = 0
+                reasoning_buf = []
+                reasoning_emitted = 0
                 yield {
                     "status": "progress",
                     "type": "llm_start",
@@ -231,26 +237,39 @@ async def _handoff_fn(
                 }
             elif isinstance(event, LLMChunk):
                 content = event.chunk.content if event.chunk else None
+                reasoning = event.chunk.reasoning if event.chunk else None
                 if content:
                     llm_buf.append(content)
-                    if len(llm_buf) - llm_emitted >= LLM_STREAM_INTERVAL:
-                        yield {
-                            "status": "progress",
-                            "type": "llm_generating",
-                            "content": "".join(llm_buf),
-                            "char_count": len(llm_buf),
-                        }
-                        llm_emitted = len(llm_buf)
-            elif isinstance(event, LLMEnd):
-                if llm_buf and len(llm_buf) > llm_emitted:
+                if reasoning:
+                    reasoning_buf.append(reasoning)
+                if (
+                    len(llm_buf) - llm_emitted >= LLM_STREAM_INTERVAL
+                    or len(reasoning_buf) - reasoning_emitted >= LLM_STREAM_INTERVAL
+                ):
                     yield {
                         "status": "progress",
                         "type": "llm_generating",
                         "content": "".join(llm_buf),
+                        "reasoning": "".join(reasoning_buf),
+                        "char_count": len(llm_buf),
+                    }
+                    llm_emitted = len(llm_buf)
+                    reasoning_emitted = len(reasoning_buf)
+            elif isinstance(event, LLMEnd):
+                if (llm_buf and len(llm_buf) > llm_emitted) or (
+                    reasoning_buf and len(reasoning_buf) > reasoning_emitted
+                ):
+                    yield {
+                        "status": "progress",
+                        "type": "llm_generating",
+                        "content": "".join(llm_buf),
+                        "reasoning": "".join(reasoning_buf),
                         "char_count": len(llm_buf),
                     }
                 llm_buf = []
                 llm_emitted = 0
+                reasoning_buf = []
+                reasoning_emitted = 0
                 yield {
                     "status": "progress",
                     "type": "llm_end",

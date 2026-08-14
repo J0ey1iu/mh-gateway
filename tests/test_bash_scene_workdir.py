@@ -46,7 +46,7 @@ async def test_scene_workdir_resolution() -> None:
 
 
 async def _collect(wrapped, **kwargs) -> list[dict]:
-    return [c async for c in wrapped(command=_PWD_CMD, timeout_ms=60_000, **kwargs)]
+    return [c async for c in wrapped(command=_PWD_CMD, timeout=60, **kwargs)]
 
 
 @pytest.mark.asyncio

@@ -150,7 +150,7 @@ TAGS_METADATA = [
     },
     {
         "name": "runtime_tools",
-        "description": "运行时工具执行。Agent 运行时调用的内置工具，包括 `discover_agents`、`handoff` 等。",
+        "description": "运行时工具执行。Agent 运行时调用的内置工具，包括 `discover_agents` 等。",
     },
     {
         "name": "tool-generator",

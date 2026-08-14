@@ -5,6 +5,8 @@ import collections
 import difflib
 import json
 import os
+import signal
+import subprocess
 import sys
 from itertools import islice
 from typing import Any, AsyncIterator
@@ -22,10 +24,35 @@ _CMD_SYNTAX_HINT = (
 )
 
 
+def _kill_tree(process: Any) -> None:
+    """Kill the shell and its whole descendant tree.
+
+    ``terminate()`` only signals the direct child; grandchildren (uv ->
+    python) inherit the pipes and survive, keeping them open so
+    ``process.wait()`` never returns (observed on Windows).  Kill the tree
+    instead: ``taskkill /T /F`` on Windows, the whole process group on POSIX
+    (the shell was spawned with ``start_new_session``).
+    """
+    try:
+        if _IS_WINDOWS:
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                capture_output=True,
+                timeout=5,
+            )
+        else:
+            os.killpg(process.pid, signal.SIGKILL)  # type: ignore[attr-defined]  # POSIX-only
+    except Exception:
+        try:
+            process.terminate()
+        except Exception:
+            pass
+
+
 async def bash_fn(
     command: str = "",
     workdir: str = "",
-    timeout_ms: int = 60000,
+    timeout: float = 300.0,
 ) -> AsyncIterator[Any]:
     if not command:
         yield {"status": "error", "message": "command is required"}
@@ -56,7 +83,10 @@ async def bash_fn(
         }
         return
 
-    timeout_s = timeout_ms / 1000.0
+    # No-output timeout in seconds: a silent command is stopped after this
+    # window and reports a timeout error, letting the agent decide how to
+    # recover.  The model picks the value (default 300s when omitted).
+    timeout_s = float(timeout)
 
     # 滚动窗口：partial_stdout/partial_stderr 只保留尾部，避免逐行携带
     # 全量输出 —— 大目录遍历等长输出命令下，逐行 join 全量 + 序列化 +
@@ -68,6 +98,13 @@ async def bash_fn(
     FLUSH_INTERVAL = 0.1
 
     try:
+        # POSIX: start a new session so the whole process group (bash + its
+        # children) can be killed with os.killpg on timeout.  Without it,
+        # terminate() only signals the direct child and grandchildren keep
+        # the pipes open.  Windows handles this via taskkill /T instead.
+        spawn_kwargs: dict[str, Any] = {}
+        if not _IS_WINDOWS:
+            spawn_kwargs["start_new_session"] = True
         process = await asyncio.create_subprocess_exec(
             *shell_cmd,
             cwd=cwd,
@@ -77,6 +114,7 @@ async def bash_fn(
             # pump 静默死亡（表现为 30s 后命令超时、输出为空）。提到 1MB 以容忍
             # 罕见的长单行（如无换行的超长输出）；更大的行退化为超时报错而非挂死。
             limit=1024 * 1024,
+            **spawn_kwargs,
         )
 
         queue: asyncio.Queue = asyncio.Queue()
@@ -149,11 +187,23 @@ async def bash_fn(
                     }
         finally:
             if process.returncode is None:
-                process.terminate()
+                _kill_tree(process)
             t_stdout.cancel()
             t_stderr.cancel()
-            await asyncio.gather(t_stdout, t_stderr, return_exceptions=True)
-            await process.wait()
+            # Bounded cleanup: nothing here may hang.  Killing the tree first
+            # closes the pipes, and every await below is capped so a stuck
+            # pump or transport can only delay us, never block forever.
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(t_stdout, t_stderr, return_exceptions=True),
+                    timeout=2.0,
+                )
+            except asyncio.TimeoutError:
+                pass
+            try:
+                await asyncio.wait_for(process.wait(), timeout=2.0)
+            except Exception:
+                pass
 
         stdout_str = "".join(stdout_bufs)
         stderr_str = "".join(stderr_bufs)
@@ -165,10 +215,10 @@ async def bash_fn(
         if timed_out:
             yield {
                 "status": "error",
-                "message": f"Command timed out after {timeout_ms}ms. Try increasing timeout_ms or simplifying the command.",
+                "message": f"Command timed out after {timeout_s:g}s with no output. Try increasing timeout or simplifying the command.",
                 "command": command[:500],
                 "timed_out": True,
-                "suggestion": "Increase timeout_ms or break the command into smaller steps",
+                "suggestion": "Increase timeout or break the command into smaller steps",
                 "stdout": stdout_str,
                 "stderr": stderr_str,
             }
@@ -550,13 +600,12 @@ BUILTIN_TOOL_METADATA: list[dict[str, Any]] = [
                     "type": "string",
                     "description": "Working directory for the command (optional). Defaults to the process working directory.",
                 },
-                "timeout_ms": {
-                    "type": "integer",
-                    "description": "Timeout in milliseconds (default: 60000, max: 300000).",
-                    "default": 60000,
+                "timeout": {
+                    "type": "number",
+                    "description": "Timeout in seconds. If the command produces no output for this long it is stopped and an error is returned. Required — choose a value appropriate for the command (defaults to 300 if omitted).",
                 },
             },
-            "required": ["command"],
+            "required": ["command", "timeout"],
         },
         "_fn": bash_fn,
     },
