@@ -23,6 +23,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from mh_gateway.adapters import (
+    AnnouncementStore,
     AuthorizationProvider,
     AttachmentStore,
     EvalResultRepository,
@@ -94,6 +95,8 @@ class GatewayAdapters:
     # 部署侧注入的附件解析器（可覆盖/扩展 gateway 内置的 docx/pptx/md/txt/msg）。
     # 选择时应用侧优先于内置默认：同扩展名可覆盖，新扩展名可新增。
     attachment_extractors: list[FileExtractor] | None = None
+    # 公告/公告栏存储（用户表、已读、同意决策全部在应用侧实现里）。
+    announcements: AnnouncementStore | None = None
     system_prompt_assembler: SystemPromptAssembler | None = None
     system_prompt_provider: SystemPromptProvider | None = None
     user_preference_provider: UserPreferenceProvider | None = None
