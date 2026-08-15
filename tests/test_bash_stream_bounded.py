@@ -66,3 +66,23 @@ async def test_huge_single_line_output_is_truncated_not_lost() -> None:
         "must keep the tail, not drop everything"
     )
     assert ok[0]["total_output_bytes"] >= 70000
+
+
+@pytest.mark.asyncio
+async def test_background_child_does_not_block_completion() -> None:
+    """后台子进程持有管道时,前台命令完成即返回,不再误报超时。
+
+    旧逻辑以双管道 EOF 判结束:后台子进程(Start-Process / sleep &)继承
+    管道写端时管道永不关闭 → 已完成的前台命令死等 timeout → 误报超时。
+    新逻辑以 shell 直接子进程退出为结束信号,应立即返回 ok 并标记后台残留。
+    """
+    cmd = (
+        "cmd /c start /b powershell -NoProfile -Command Start-Sleep 60"
+        if _POWERSHELL
+        else "sleep 60 &"
+    )
+    chunks = await _collect(cmd, timeout=5)
+
+    ok = [c for c in chunks if c.get("status") == "ok"]
+    assert len(ok) == 1, f"must finish fast, got: {chunks[-1] if chunks else None}"
+    assert ok[0].get("background_processes") is True
