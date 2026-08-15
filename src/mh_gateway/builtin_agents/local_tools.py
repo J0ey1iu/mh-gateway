@@ -60,7 +60,9 @@ async def bash_fn(
 
     _cmd = (
         "$OutputEncoding=[System.Text.UTF8Encoding]::new(); [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new(); "
-        + command
+        # Windows PowerShell 里 `curl` 是 Invoke-WebRequest 的 alias(慢、行为不同),
+        # 移除后解析到系统 curl.exe。
+        "Remove-Item Alias:curl -ErrorAction SilentlyContinue; " + command
         if _IS_WINDOWS
         else command
     )
@@ -163,47 +165,78 @@ async def bash_fn(
         t_stdout = asyncio.create_task(_pump(process.stdout, stdout_bufs, "stdout"))
         t_stderr = asyncio.create_task(_pump(process.stderr, stderr_bufs, "stderr"))
 
+        def _stream_event(
+            typ: str, label: str, content: str, partial: str
+        ) -> dict | None:
+            """构造 progress 事件;done 事件不再作为结束信号,返回 None 忽略。"""
+            if typ == "done":
+                return None
+            return {
+                "status": "progress",
+                "type": "stream",
+                "stream": label,
+                "content": content,
+                "partial_stdout": partial if label == "stdout" else None,
+                "partial_stderr": partial if label == "stderr" else None,
+            }
+
+        background = False
         try:
-            done_count = 0
-            while done_count < 2:
+            while True:
+                # 命令结束 = 直接子进程(shell)退出,不再死等双管道 EOF:
+                # 后台子进程(Start-Process / sleep &)继承管道写端时管道永不
+                # 关闭,旧逻辑会把已完成的前台命令(如 curl)误判为超时。
+                if process.returncode is not None:
+                    break
                 try:
                     typ, label, content, partial = await asyncio.wait_for(
                         queue.get(), timeout=timeout_s
                     )
                 except asyncio.TimeoutError:
+                    if process.returncode is not None:
+                        break  # shell 刚退出且队列已空 → 正常收尾
                     timed_out = True
                     break
-
-                if typ == "done":
-                    done_count += 1
+                ev = _stream_event(typ, label, content, partial)
+                if ev is not None:
+                    yield ev
                 else:
-                    yield {
-                        "status": "progress",
-                        "type": "stream",
-                        "stream": label,
-                        "content": content,
-                        "partial_stdout": partial if label == "stdout" else None,
-                        "partial_stderr": partial if label == "stderr" else None,
-                    }
+                    # 管道 EOF ⇒ shell(管道写端)已退出,但 Windows 上 returncode
+                    # 回调可能晚于 EOF 通知——显式 wait() 让 returncode 就绪,
+                    # 否则下一轮会在空队列上误等整个 timeout_s。已退出则立即返回。
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=timeout_s)
+                    except asyncio.TimeoutError:
+                        pass  # 不应发生(EOF ⇒ shell 已退);兜底回到循环继续
         finally:
             if process.returncode is None:
                 _kill_tree(process)
-            t_stdout.cancel()
-            t_stderr.cancel()
-            # Bounded cleanup: nothing here may hang.  Killing the tree first
-            # closes the pipes, and every await below is capped so a stuck
-            # pump or transport can only delay us, never block forever.
+            # shell 退出后给 pump 短窗口排空最后输出;后台子进程持有管道时
+            # pump 挂住,此时取消并标记 background(不杀树,保留刚起的服务)。
+            # 每个 await 都有上限,卡住的 pump 只延迟我们,不会阻塞 forever。
             try:
                 await asyncio.wait_for(
                     asyncio.gather(t_stdout, t_stderr, return_exceptions=True),
-                    timeout=2.0,
+                    timeout=0.5,
                 )
             except asyncio.TimeoutError:
-                pass
+                background = True
+                t_stdout.cancel()
+                t_stderr.cancel()
             try:
                 await asyncio.wait_for(process.wait(), timeout=2.0)
             except Exception:
                 pass
+
+        # drain 队列剩余事件(shell 退出瞬间已入队但尚未消费的)
+        while True:
+            try:
+                typ, label, content, partial = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            ev = _stream_event(typ, label, content, partial)
+            if ev is not None:
+                yield ev
 
         stdout_str = "".join(stdout_bufs)
         stderr_str = "".join(stderr_bufs)
@@ -221,25 +254,31 @@ async def bash_fn(
                 "suggestion": "Increase timeout or break the command into smaller steps",
                 "stdout": stdout_str,
                 "stderr": stderr_str,
+                "truncated": truncated,
+                "total_output_bytes": total_out,
             }
         elif returncode == 0:
+            message = (
+                f"Command completed successfully, output truncated (showing last {WINDOW_LIMIT} of {total_out} bytes)"
+                if truncated
+                else (
+                    f"Command completed successfully ({line_count} lines of output)"
+                    if line_count
+                    else "Command completed successfully (no output)"
+                )
+            )
+            if background:
+                message += " Background process(es) are still running; output may be incomplete."
             yield {
                 "status": "ok",
-                "message": (
-                    f"Command completed successfully, output truncated (showing last {WINDOW_LIMIT} of {total_out} bytes)"
-                    if truncated
-                    else (
-                        f"Command completed successfully ({line_count} lines of output)"
-                        if line_count
-                        else "Command completed successfully (no output)"
-                    )
-                ),
+                "message": message,
                 "stdout": stdout_str,
                 "stderr": stderr_str,
                 "exit_code": 0,
                 "command": command[:500],
                 "truncated": truncated,
                 "total_output_bytes": total_out,
+                "background_processes": background,
             }
         else:
             yield {
@@ -252,6 +291,7 @@ async def bash_fn(
                 "suggestion": "Review stderr output and fix the command",
                 "truncated": truncated,
                 "total_output_bytes": total_out,
+                "background_processes": background,
             }
     except FileNotFoundError:
         yield {
