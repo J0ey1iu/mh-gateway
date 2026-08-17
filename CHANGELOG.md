@@ -1,5 +1,18 @@
 # Change Log
 
+## 0.1.2a6
+
+- fix(bash): background children no longer block command completion
+  (mh-incubator #75) — completion is now keyed on shell exit instead of
+  pipe EOF, so a background child (`Start-Process` / `sleep &`)
+  inheriting stdout/stderr can no longer keep the pipes open and make a
+  finished foreground command (e.g. `curl`) hit the no-output timeout
+  and get its tree killed; the tree is only killed on a real timeout
+  (normal completion leaves background processes running and reports
+  `background_processes=true`), Windows drops the `curl` ->
+  `Invoke-WebRequest` alias, and timed-out results now include
+  truncated/total output byte counts.
+
 ## 0.1.2a5
 
 - fix: bash tool timeout now kills the whole process tree
