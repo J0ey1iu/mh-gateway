@@ -635,6 +635,13 @@ class AnnouncementRecord:
     created_at: str = ""
     pushed_at: str = ""
     pushed_by: str = ""
+    # 场景绑定："all" = 所有场景主页展示；"scene" = 仅进入 scene_id 场景后展示
+    scope: str = "all"
+    scene_id: str = ""
+    # 公告图片 URL（"" = 无图）；jpg/png/gif/webp，动图 gif 原生支持
+    image: str = ""
+    # 展示模板样式："image_text" = 图片横幅 + 文案；"text_only" = 纯文字
+    style: str = "image_text"
 
 
 @dataclass
@@ -703,14 +710,31 @@ class AnnouncementStore(Protocol):
 
     # ── User (admin included — admins see their own pushes) ──
 
-    async def visible_announcements(self, user_id: str) -> list[AnnouncementRecord]:
+    async def visible_announcements(
+        self, user_id: str, scene_id: str | None = None
+    ) -> list[AnnouncementRecord]:
         """Announcements the user must still act on: not read, and for
         consent announcements not yet **agreed**.
+
+        Scene binding: on the scene home page (``scene_id`` None) only
+        ``scope == "all"`` announcements show; inside a scene (``scene_id``
+        set) only that scene's announcements show.
 
         A declined consent announcement stays visible — there is no
         point-to-point push, so the user faces it again on the next visit
         until they agree (or the admin deactivates it).
         """
+        ...
+
+    # ── Announcement images (admin uploads, anyone can view) ──
+
+    async def save_image(self, data: bytes, content_type: str) -> str:
+        """Persist an announcement image; returns its id (includes the
+        extension so it can be re-served without a metadata lookup)."""
+        ...
+
+    async def open_image(self, image_id: str) -> tuple[bytes, str] | None:
+        """Return ``(image bytes, content_type)`` or None when missing."""
         ...
 
     async def mark_read(self, announcement_id: str, user_id: str) -> bool:

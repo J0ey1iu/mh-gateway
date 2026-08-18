@@ -890,6 +890,85 @@
         }
       }
     },
+    "/api/v1/announcements/image": {
+      "post": {
+        "tags": [
+          "announcements"
+        ],
+        "summary": "Upload Announcement Image",
+        "operationId": "upload_announcement_image_api_v1_announcements_image_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_announcement_image_api_v1_announcements_image_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/announcements/images/{image_id}": {
+      "get": {
+        "tags": [
+          "announcements"
+        ],
+        "summary": "Get Announcement Image",
+        "operationId": "get_announcement_image_api_v1_announcements_images__image_id__get",
+        "parameters": [
+          {
+            "name": "image_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Image Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/announcements/visible": {
       "get": {
         "tags": [
@@ -897,12 +976,42 @@
         ],
         "summary": "Visible Announcements",
         "operationId": "visible_announcements_api_v1_announcements_visible_get",
+        "parameters": [
+          {
+            "name": "scene_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "\u8fdb\u5165\u573a\u666f\u65f6\u4f20\u573a\u666f id\uff1b\u4e0d\u4f20 = \u573a\u666f\u4e3b\u9875",
+              "title": "Scene Id"
+            },
+            "description": "\u8fdb\u5165\u573a\u666f\u65f6\u4f20\u573a\u666f id\uff1b\u4e0d\u4f20 = \u573a\u666f\u4e3b\u9875"
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -4572,6 +4681,25 @@
             "type": "boolean",
             "title": "Active",
             "default": true
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "all",
+              "scene"
+            ],
+            "title": "Scope",
+            "default": "all"
+          },
+          "scene_id": {
+            "type": "string",
+            "title": "Scene Id",
+            "default": ""
+          },
+          "image": {
+            "type": "string",
+            "title": "Image",
+            "default": ""
           }
         },
         "type": "object",
@@ -4658,6 +4786,20 @@
           "files"
         ],
         "title": "Body_import_entities_api_v1_management_import_post"
+      },
+      "Body_upload_announcement_image_api_v1_announcements_image_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_announcement_image_api_v1_announcements_image_post"
       },
       "Body_upload_attachment_api_v1_attachments_post": {
         "properties": {
