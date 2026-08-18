@@ -53,6 +53,7 @@ class InMemoryAnnouncementStore(AnnouncementStore):
         self._records: dict[str, AnnouncementRecord] = {}
         self._reads: dict[str, set[str]] = {}
         self._consents: dict[str, dict[str, str]] = {}
+        self._images: dict[str, tuple[bytes, str]] = {}
 
     async def list_announcements(
         self, page: int = 1, page_size: int = 20
@@ -119,14 +120,29 @@ class InMemoryAnnouncementStore(AnnouncementStore):
             total_users=3,
         )
 
-    async def visible_announcements(self, user_id: str) -> list[AnnouncementRecord]:
+    async def visible_announcements(
+        self, user_id: str, scene_id: str | None = None
+    ) -> list[AnnouncementRecord]:
         return [
             r
             for r in self._records.values()
             if r.active
             and user_id not in self._reads.get(r.announcement_id, set())
             and self._consents.get(r.announcement_id, {}).get(user_id) != "agree"
+            and (
+                r.scope == "all"
+                if not scene_id
+                else r.scope == "scene" and r.scene_id == scene_id
+            )
         ]
+
+    async def save_image(self, data: bytes, content_type: str) -> str:
+        image_id = f"img-{len(self._records)}.{content_type.split('/')[-1]}"
+        self._images[image_id] = (data, content_type)
+        return image_id
+
+    async def open_image(self, image_id: str) -> tuple[bytes, str] | None:
+        return self._images.get(image_id)
 
     async def mark_read(self, announcement_id: str, user_id: str) -> bool:
         if announcement_id not in self._records:
@@ -230,6 +246,15 @@ def test_create_list_update_delete(client: TestClient) -> None:
     ).json()
     assert updated["title"] == "renamed"
     assert updated["consent_required"] is True
+    assert updated["style"] == "image_text"  # 默认样式
+
+    # 样式可配置：text_only / image_text
+    patched = client.patch(
+        f"/api/v1/announcements/{aid}",
+        json={"title": "renamed", "body": "new body", "style": "text_only"},
+        headers={"X-User-Id": "1"},
+    ).json()
+    assert patched["style"] == "text_only"
 
     r = client.delete(f"/api/v1/announcements/{aid}", headers={"X-User-Id": "1"})
     assert r.status_code == 200
@@ -456,6 +481,83 @@ def test_inactive_announcement_not_visible(client: TestClient) -> None:
         "/api/v1/announcements/visible", headers={"X-User-Id": "u1"}
     ).json()
     assert all(a["announcement_id"] != aid for a in visible)
+
+
+def test_scene_binding_visible(client: TestClient) -> None:
+    """scope=all 只在场景主页（不带 scene_id）弹出；scope=scene 只在对应场景内弹出。"""
+    all_aid = _create(client, title="global")["announcement_id"]
+    scene_aid = _create(client, title="in-scene", scope="scene", scene_id="s1")[
+        "announcement_id"
+    ]
+
+    # 场景主页：只有 all
+    home = client.get(
+        "/api/v1/announcements/visible", headers={"X-User-Id": "u1"}
+    ).json()
+    assert [a["announcement_id"] for a in home] == [all_aid]
+
+    # 进入 s1：只有 s1 的场景公告
+    in_scene = client.get(
+        "/api/v1/announcements/visible?scene_id=s1", headers={"X-User-Id": "u1"}
+    ).json()
+    assert [a["announcement_id"] for a in in_scene] == [scene_aid]
+
+    # 进入 s2：无公告
+    other = client.get(
+        "/api/v1/announcements/visible?scene_id=s2", headers={"X-User-Id": "u1"}
+    ).json()
+    assert other == []
+
+    # 管理端列表携带新字段
+    listed = client.get("/api/v1/announcements", headers={"X-User-Id": "1"}).json()
+    by_id = {a["announcement_id"]: a for a in listed["items"]}
+    assert by_id[all_aid]["scope"] == "all"
+    assert by_id[scene_aid]["scope"] == "scene"
+    assert by_id[scene_aid]["scene_id"] == "s1"
+
+
+def test_image_upload_and_serve(
+    client: TestClient, non_admin_client: TestClient
+) -> None:
+    """公告图片上传（gif/静态图均可）→ 返回 URL → 可匿名访问。"""
+    gif = b"GIF89a\x01\x00\x01\x00\x00\xff\x00\x00\x00\x00\x00!\xf9\x04\x00\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;"
+    r = client.post(
+        "/api/v1/announcements/image",
+        files={"file": ("banner.gif", gif, "image/gif")},
+        headers={"X-User-Id": "1"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["url"].startswith("/api/v1/announcements/images/")
+
+    served = client.get(body["url"])
+    assert served.status_code == 200
+    assert served.headers["content-type"] == "image/gif"
+    assert served.content == gif
+
+    # 绑定到公告后展示字段带图片 URL
+    aid = _create(client, image=body["url"])["announcement_id"]
+    listed = client.get("/api/v1/announcements", headers={"X-User-Id": "1"}).json()
+    by_id = {a["announcement_id"]: a for a in listed["items"]}
+    assert by_id[aid]["image"] == body["url"]
+
+    # 非管理员不能上传；非法扩展名拒绝
+    assert (
+        non_admin_client.post(
+            "/api/v1/announcements/image",
+            files={"file": ("x.png", b"x", "image/png")},
+            headers={"X-User-Id": "1"},
+        ).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            "/api/v1/announcements/image",
+            files={"file": ("x.exe", b"x", "application/octet-stream")},
+            headers={"X-User-Id": "1"},
+        ).status_code
+        == 400
+    )
 
 
 def test_store_not_configured_returns_503() -> None:
