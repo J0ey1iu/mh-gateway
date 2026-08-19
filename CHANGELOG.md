@@ -1,5 +1,17 @@
 # Change Log
 
+## 0.1.2a7
+
+- release: lockstep bump to match the 0.8.1a5/0.1.2a7/0.1.2a8 publish
+  set — `minimal-harness>=0.8.1a5` constraint updated (mh-local now
+  ships `mh-gateway>=0.1.2a7`).
+- feat(announcements): draft/publish lifecycle, validity window, media
+  carousel, i18n content, draft-only delete (mh-gateway #43).
+- feat(announcements): announcement image upload, scene binding, and
+  style config (mh-gateway #42).
+- fix(metrics): record LLM call failures in the error rate
+  (mh-gateway #44).
+
 ## 0.1.2a6
 
 - fix(bash): background children no longer block command completion
