@@ -415,6 +415,38 @@ class TestMetricsPersistenceMiddleware:
             set_metrics_repo(None)
 
     @pytest.mark.asyncio
+    async def test_records_llm_error_on_error_hook(self):
+        # 回归（issue #85）：LLM 调用失败时 on_llm_end 不会触发，
+        # 需通过 on_error 补记一条 status="error" 的 LLM 记录。
+        repo = InMemoryMetricsRepository()
+        set_metrics_repo(repo)
+        try:
+            mw = MetricsPersistenceMiddleware(
+                user_id="u1", agent_id="a1", provider="openai", model="gpt-4"
+            )
+            await mw.on_llm_start([], [])
+            await mw.on_error(RuntimeError("boom"))
+            s = await repo.query_summary()
+            assert s.llm_call_count == 1
+            assert s.error_count == 1
+            assert s.error_rate == 1.0
+        finally:
+            set_metrics_repo(None)
+
+    @pytest.mark.asyncio
+    async def test_error_without_pending_llm_is_ignored(self):
+        # LLM 成功之后的其它阶段异常不应误算为 LLM 失败。
+        repo = InMemoryMetricsRepository()
+        set_metrics_repo(repo)
+        try:
+            mw = MetricsPersistenceMiddleware(user_id="u1", agent_id="a1")
+            await mw.on_error(RuntimeError("post-llm hook error"))
+            s = await repo.query_summary()
+            assert s.llm_call_count == 0
+        finally:
+            set_metrics_repo(None)
+
+    @pytest.mark.asyncio
     async def test_records_tool_call(self):
         repo = InMemoryMetricsRepository()
         set_metrics_repo(repo)

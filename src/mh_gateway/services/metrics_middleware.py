@@ -124,3 +124,37 @@ class MetricsPersistenceMiddleware(Middleware):
         # No-op reserved for future agent-level stats; hook exists so
         # subclasses can extend without touching the base class.
         return None
+
+    async def on_error(self, error: BaseException) -> None:
+        """补记 LLM 调用失败：失败时 ``on_llm_end`` 不会触发（异常直接抛出），
+        否则错误率只统计到工具失败、漏掉 LLM 失败（mh-incubator #85）。
+
+        仅当 ``on_llm_start`` 后未收到 ``on_llm_end``（即 ``_llm_start_ts``
+        仍非空）时才补记，避免把 LLM 成功之后的其他阶段异常误算成 LLM 失败。
+        """
+        if self._llm_start_ts is None:
+            return
+        repo = get_metrics_repo()
+        duration_ms = round((time.monotonic() - self._llm_start_ts) * 1000, 2)
+        self._llm_start_ts = None
+        if repo is None:
+            return
+        try:
+            await repo.record_llm_call(
+                LLMCallRecord(
+                    ts=_utc_now(),
+                    user_id=self._user_id,
+                    session_id=self._session_id,
+                    agent_name=self._agent_id,
+                    scenario_id=self._scenario_id,
+                    provider=self._provider,
+                    model=self._model,
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    duration_ms=duration_ms,
+                    status="error",
+                    error=str(error),
+                )
+            )
+        except Exception:
+            logger.exception("Failed to persist LLM error metrics record")
