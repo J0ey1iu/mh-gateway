@@ -2,15 +2,17 @@
 
 ## 0.1.2a7
 
-- release: lockstep bump to match the 0.8.1a5/0.1.2a7/0.1.2a8 publish
-  set — `minimal-harness>=0.8.1a5` constraint updated (mh-local now
-  ships `mh-gateway>=0.1.2a7`).
 - feat(announcements): draft/publish lifecycle, validity window, media
   carousel, i18n content, draft-only delete (mh-gateway #43).
 - feat(announcements): announcement image upload, scene binding, and
   style config (mh-gateway #42).
-- fix(metrics): record LLM call failures in the error rate
-  (mh-gateway #44).
+- fix(metrics): record LLM call failures in the error rate —
+  `on_llm_end` only fires on the success path, so a raised LLM
+  exception skipped the `LLMCallRecord(status=error)` write; the new
+  `on_error` middleware hook now backfills a failed LLM record when an
+  LLM call was still in flight (mh-incubator #85).
+- deps: minimal-harness>=0.8.1a5 (lockstep publish set
+  0.8.1a5/0.1.2a7/0.1.2a8).
 
 ## 0.1.2a6
 
