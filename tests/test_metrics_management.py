@@ -21,6 +21,7 @@ from mh_gateway.adapters import UserIdentity
 from mh_gateway.app import GatewayAdapters, create_app
 from mh_gateway.config import ConfigSchema
 from mh_gateway.metrics_repo import (
+    AnnouncementEventRecord,
     InMemoryMetricsRepository,
     LLMCallRecord,
     MetricsSummary,
@@ -42,6 +43,51 @@ ALL_PERMS_WITH_METRICS = [*ALL_PERMS, "manage:metrics:*"]
 
 
 class TestAggregation:
+    @pytest.mark.asyncio
+    async def test_announcement_events_aggregated_with_date_range(self):
+        repo = InMemoryMetricsRepository()
+        await repo.record_announcement_event(
+            AnnouncementEventRecord(
+                ts="2024-06-01T10:00:00Z",
+                user_id="u1",
+                announcement_id="a1",
+                kind="exposure",
+            )
+        )
+        await repo.record_announcement_event(
+            AnnouncementEventRecord(
+                ts="2024-06-02T10:00:00Z",
+                user_id="u2",
+                announcement_id="a1",
+                kind="exposure",
+            )
+        )
+        await repo.record_announcement_event(
+            AnnouncementEventRecord(
+                ts="2024-06-02T10:00:00Z",
+                user_id="u2",
+                announcement_id="a1",
+                kind="confirm",
+            )
+        )
+        # 范围外不统计
+        await repo.record_announcement_event(
+            AnnouncementEventRecord(
+                ts="2024-07-01T10:00:00Z",
+                user_id="u3",
+                announcement_id="a2",
+                kind="exposure",
+            )
+        )
+
+        s = await repo.query_summary(date_from="2024-06-01", date_to="2024-06-30")
+        assert s.announcement_exposure_count == 2
+        assert s.announcement_confirm_count == 1
+
+        total = await repo.query_summary()
+        assert total.announcement_exposure_count == 3
+        assert total.announcement_confirm_count == 1
+
     @pytest.mark.asyncio
     async def test_empty_summary(self):
         repo = InMemoryMetricsRepository()
