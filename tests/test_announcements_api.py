@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from datetime import UTC, datetime
 
 from mh_gateway.adapters import (
     AnnouncementRecord,
@@ -52,6 +53,7 @@ class InMemoryAnnouncementStore(AnnouncementStore):
     def __init__(self) -> None:
         self._records: dict[str, AnnouncementRecord] = {}
         self._reads: dict[str, set[str]] = {}
+        self._confirms: dict[str, set[str]] = {}
         self._consents: dict[str, dict[str, str]] = {}
         self._images: dict[str, tuple[bytes, str]] = {}
 
@@ -91,6 +93,7 @@ class InMemoryAnnouncementStore(AnnouncementStore):
             return False
         del self._records[announcement_id]
         self._reads.pop(announcement_id, None)
+        self._confirms.pop(announcement_id, None)
         self._consents.pop(announcement_id, None)
         return True
 
@@ -101,12 +104,14 @@ class InMemoryAnnouncementStore(AnnouncementStore):
         rec.pushed_at = "t9"
         rec.pushed_by = pushed_by
         self._reads.pop(announcement_id, None)
+        self._confirms.pop(announcement_id, None)
         self._consents.pop(announcement_id, None)
         return True
 
     async def announcement_stats(self, announcement_id: str) -> AnnouncementStats:
         return AnnouncementStats(
             read_count=len(self._reads.get(announcement_id, set())),
+            confirm_count=len(self._confirms.get(announcement_id, set())),
             agree_count=sum(
                 1
                 for d in self._consents.get(announcement_id, {}).values()
@@ -123,16 +128,28 @@ class InMemoryAnnouncementStore(AnnouncementStore):
     async def visible_announcements(
         self, user_id: str, scene_id: str | None = None
     ) -> list[AnnouncementRecord]:
+        now = datetime.now(UTC)
+
+        def in_window(r: AnnouncementRecord) -> bool:
+            try:
+                start = datetime.fromisoformat(r.start_time) if r.start_time else None
+                end = datetime.fromisoformat(r.end_time) if r.end_time else None
+            except ValueError:
+                return True
+            return (start is None or now >= start) and (end is None or now <= end)
+
         return [
             r
             for r in self._records.values()
             if r.active
+            and r.status == "published"
+            and in_window(r)
             and user_id not in self._reads.get(r.announcement_id, set())
             and self._consents.get(r.announcement_id, {}).get(user_id) != "agree"
             and (
                 r.scope == "all"
                 if not scene_id
-                else r.scope == "scene" and r.scene_id == scene_id
+                else r.scope == "all" or r.scene_id == scene_id
             )
         ]
 
@@ -148,6 +165,13 @@ class InMemoryAnnouncementStore(AnnouncementStore):
         if announcement_id not in self._records:
             return False
         self._reads.setdefault(announcement_id, set()).add(user_id)
+        return True
+
+    async def mark_confirmed(self, announcement_id: str, user_id: str) -> bool:
+        if announcement_id not in self._records:
+            return False
+        self._reads.setdefault(announcement_id, set()).add(user_id)
+        self._confirms.setdefault(announcement_id, set()).add(user_id)
         return True
 
     async def record_consent(
@@ -257,10 +281,18 @@ def test_create_list_update_delete(client: TestClient) -> None:
     assert patched["style"] == "text_only"
 
     r = client.delete(f"/api/v1/announcements/{aid}", headers={"X-User-Id": "1"})
-    assert r.status_code == 200
+    assert r.status_code == 409  # 已发布公告不可删除
+
+    # 草稿可删除
+    draft = _create(client, title="draft to delete", status="draft")
+    dr = client.delete(
+        f"/api/v1/announcements/{draft['announcement_id']}",
+        headers={"X-User-Id": "1"},
+    )
+    assert dr.status_code == 200
     assert (
         client.get("/api/v1/announcements", headers={"X-User-Id": "1"}).json()["total"]
-        == 0
+        == 1  # 仅剩已发布那条
     )
 
 
@@ -484,7 +516,8 @@ def test_inactive_announcement_not_visible(client: TestClient) -> None:
 
 
 def test_scene_binding_visible(client: TestClient) -> None:
-    """scope=all 只在场景主页（不带 scene_id）弹出；scope=scene 只在对应场景内弹出。"""
+    """scope=all 在场景主页（不带 scene_id）与进入场景后都展示；
+    scope=scene 只在对应场景内弹出。"""
     all_aid = _create(client, title="global")["announcement_id"]
     scene_aid = _create(client, title="in-scene", scope="scene", scene_id="s1")[
         "announcement_id"
@@ -496,17 +529,17 @@ def test_scene_binding_visible(client: TestClient) -> None:
     ).json()
     assert [a["announcement_id"] for a in home] == [all_aid]
 
-    # 进入 s1：只有 s1 的场景公告
+    # 进入 s1：all + s1 的场景公告都展示
     in_scene = client.get(
         "/api/v1/announcements/visible?scene_id=s1", headers={"X-User-Id": "u1"}
     ).json()
-    assert [a["announcement_id"] for a in in_scene] == [scene_aid]
+    assert {a["announcement_id"] for a in in_scene} == {all_aid, scene_aid}
 
-    # 进入 s2：无公告
+    # 进入 s2：只有 all
     other = client.get(
         "/api/v1/announcements/visible?scene_id=s2", headers={"X-User-Id": "u1"}
     ).json()
-    assert other == []
+    assert [a["announcement_id"] for a in other] == [all_aid]
 
     # 管理端列表携带新字段
     listed = client.get("/api/v1/announcements", headers={"X-User-Id": "1"}).json()
@@ -514,6 +547,77 @@ def test_scene_binding_visible(client: TestClient) -> None:
     assert by_id[all_aid]["scope"] == "all"
     assert by_id[scene_aid]["scope"] == "scene"
     assert by_id[scene_aid]["scene_id"] == "s1"
+
+
+def test_media_upload_mp4_and_serve(
+    client: TestClient,
+) -> None:
+    """mp4 视频上传 → 返回 URL → 可匿名访问。"""
+    mp4 = b"\x00\x00\x00\x18ftypmp42"
+    r = client.post(
+        "/api/v1/announcements/image",
+        files={"file": ("clip.mp4", mp4, "video/mp4")},
+        headers={"X-User-Id": "1"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["url"].endswith(".mp4")
+
+    served = client.get(body["url"])
+    assert served.status_code == 200
+    assert served.headers["content-type"] == "video/mp4"
+
+
+def test_confirm_counts_exposure_and_confirmation(client: TestClient) -> None:
+    """点"我知道"（confirm）同时计入曝光与确认；点叉（read）只计曝光。"""
+    aid = _create(client)["announcement_id"]
+
+    # 点叉：只曝光
+    client.post(f"/api/v1/announcements/{aid}/read", headers={"X-User-Id": "u1"})
+    stats = client.get(
+        f"/api/v1/announcements/{aid}/stats", headers={"X-User-Id": "1"}
+    ).json()
+    assert stats["read_count"] == 1
+    assert stats["confirm_count"] == 0
+
+    # 另一个用户点"我知道"：曝光 + 确认
+    client.post(f"/api/v1/announcements/{aid}/confirm", headers={"X-User-Id": "u2"})
+    stats = client.get(
+        f"/api/v1/announcements/{aid}/stats", headers={"X-User-Id": "1"}
+    ).json()
+    assert stats["read_count"] == 2
+    assert stats["confirm_count"] == 1
+    assert (
+        client.get("/api/v1/announcements/visible", headers={"X-User-Id": "u2"}).json()
+        == []
+    )
+
+
+def test_draft_and_time_window_visibility(client: TestClient) -> None:
+    """草稿不可见；生效时间范围外不可见（active 开关 + 时间范围共同决定）。"""
+    draft_aid = _create(client, status="draft")["announcement_id"]
+    _create(client, start_time="2099-01-01T00:00:00Z", end_time="2099-12-31T00:00:00Z")
+    _create(client, start_time="2000-01-01T00:00:00Z", end_time="2001-01-01T00:00:00Z")
+    live_aid = _create(
+        client, start_time="2000-01-01T00:00:00Z", end_time="2099-12-31T00:00:00Z"
+    )["announcement_id"]
+
+    visible = client.get(
+        "/api/v1/announcements/visible", headers={"X-User-Id": "u1"}
+    ).json()
+    aids = {a["announcement_id"] for a in visible}
+    assert aids == {live_aid}
+
+    # 发布后可见
+    client.patch(
+        f"/api/v1/announcements/{draft_aid}",
+        json={"title": "d", "body": "b", "status": "published"},
+        headers={"X-User-Id": "1"},
+    )
+    visible = client.get(
+        "/api/v1/announcements/visible", headers={"X-User-Id": "u1"}
+    ).json()
+    assert draft_aid in {a["announcement_id"] for a in visible}
 
 
 def test_image_upload_and_serve(

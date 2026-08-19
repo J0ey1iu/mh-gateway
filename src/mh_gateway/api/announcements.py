@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
@@ -30,6 +31,7 @@ from mh_gateway.api.dependencies import (
     require_permission,
     resolve_request_identity,
 )
+from mh_gateway.metrics_repo import AnnouncementEventRecord, get_metrics_repo
 from mh_gateway.services.database import get_adapters
 
 logger = logging.getLogger("orchestration.announcements")
@@ -38,26 +40,37 @@ router = APIRouter(prefix="/api/v1/announcements", tags=["announcements"])
 
 PERMISSION = "manage:announcement:*"
 
-ALLOWED_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+ALLOWED_MEDIA_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4"}
 
-_CONTENT_TYPES = {
+_MEDIA_TYPES = {
     "jpg": "image/jpeg",
     "jpeg": "image/jpeg",
     "png": "image/png",
     "gif": "image/gif",
     "webp": "image/webp",
+    "mp4": "video/mp4",
 }
 
 
 class AnnouncementPayload(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     body: str = Field(min_length=1)
+    # 标题/正文的多语言 JSON（{"zh": …,"en": …}，空 = 未提供）
+    title_locale: str = ""
+    body_locale: str = ""
     consent_required: bool = False
     active: bool = True
     scope: Literal["all", "scene"] = "all"
     scene_id: str = ""
     image: str = ""
     style: Literal["image_text", "text_only"] = "image_text"
+    # 媒体 URL 列表（图片 + mp4 视频），image_text 大版本轮播
+    media: list[str] = Field(default_factory=list)
+    # "draft" = 草稿（用户端不可见）；"published" = 已发布
+    status: Literal["draft", "published"] = "published"
+    # 生效时间范围（ISO 8601，空 = 不限）
+    start_time: str = ""
+    end_time: str = ""
 
 
 def _get_store(request: Request) -> AnnouncementStore:
@@ -101,6 +114,8 @@ async def create_announcement(
         announcement_id=uuid4().hex,
         title=payload.title,
         body=payload.body,
+        title_locale=payload.title_locale,
+        body_locale=payload.body_locale,
         consent_required=payload.consent_required,
         active=payload.active,
         pushed_by=user_id,
@@ -108,6 +123,10 @@ async def create_announcement(
         scene_id=payload.scene_id,
         image=payload.image,
         style=payload.style,
+        media=payload.media,
+        status=payload.status,
+        start_time=payload.start_time,
+        end_time=payload.end_time,
     )
     stored = await store.create_announcement(record)
     logger.info(
@@ -132,12 +151,22 @@ async def update_announcement(
         raise HTTPException(404, "Announcement not found")
     existing.title = payload.title
     existing.body = payload.body
+    existing.title_locale = payload.title_locale
+    existing.body_locale = payload.body_locale
     existing.consent_required = payload.consent_required
     existing.active = payload.active
     existing.scope = payload.scope
     existing.scene_id = payload.scene_id
     existing.image = payload.image
     existing.style = payload.style
+    existing.media = payload.media
+    existing.status = payload.status
+    existing.start_time = payload.start_time
+    existing.end_time = payload.end_time
+    # 草稿 → 发布：视为一次新推送，排在前面
+    if existing.status == "draft" and payload.status == "published":
+        existing.pushed_at = datetime.now(UTC).isoformat()
+        existing.pushed_by = user_id
     updated = await store.update_announcement(existing)
     return asdict(updated)
 
@@ -149,6 +178,11 @@ async def delete_announcement(
     user_id: str = Depends(require_permission(PERMISSION)),
 ):
     store = _get_store(request)
+    existing = await store.get_announcement(announcement_id)
+    if existing is None:
+        raise HTTPException(404, "Announcement not found")
+    if existing.status != "draft":
+        raise HTTPException(409, "Only draft announcements can be deleted")
     if not await store.delete_announcement(announcement_id):
         raise HTTPException(404, "Announcement not found")
     return {"ok": True}
@@ -179,13 +213,14 @@ async def announcement_stats(
     stats = await store.announcement_stats(announcement_id)
     return {
         "read_count": stats.read_count,
+        "confirm_count": stats.confirm_count,
         "agree_count": stats.agree_count,
         "decline_count": stats.decline_count,
         "total_users": stats.total_users,
     }
 
 
-# ── Announcement images ────────────────────────────────────────────────────────
+# ── Announcement media (images + mp4 videos) ────────────────────────────────
 
 
 @router.post("/image")
@@ -196,18 +231,18 @@ async def upload_announcement_image(
 ):
     store = _get_store(request)
     ext = Path(file.filename or "").suffix.lower().lstrip(".")
-    if f".{ext}" not in ALLOWED_IMAGE_EXT:
+    if f".{ext}" not in ALLOWED_MEDIA_EXT:
         raise HTTPException(
             400,
-            f"Unsupported image type '.{ext}'. Allowed: "
-            + ", ".join(sorted(ALLOWED_IMAGE_EXT)),
+            f"Unsupported media type '.{ext}'. Allowed: "
+            + ", ".join(sorted(ALLOWED_MEDIA_EXT)),
         )
     data = await file.read()
-    if len(data) > 10 * 1024 * 1024:
-        raise HTTPException(413, "Image too large: 10 MB limit")
-    image_id = await store.save_image(data, _CONTENT_TYPES[ext])
+    if len(data) > 20 * 1024 * 1024:
+        raise HTTPException(413, "Media too large: 20 MB limit")
+    image_id = await store.save_image(data, _MEDIA_TYPES[ext])
     url = f"/api/v1/announcements/images/{image_id}"
-    logger.info("announcement.image.uploaded id=%s by=%s", image_id, user_id)
+    logger.info("announcement.media.uploaded id=%s by=%s", image_id, user_id)
     return {"image_id": image_id, "url": url}
 
 
@@ -222,6 +257,23 @@ async def get_announcement_image(request: Request, image_id: str):
 
 
 # ── User surface ───────────────────────────────────────────────────────────────
+
+
+async def _record_announcement_event(
+    kind: str, user_id: str, announcement_id: str
+) -> None:
+    """与其它运维指标一致的打点（metrics repo 未配置时静默跳过）。"""
+    repo = get_metrics_repo()
+    if repo is None:
+        return
+    await repo.record_announcement_event(
+        AnnouncementEventRecord(
+            ts=datetime.now(UTC).isoformat(),
+            user_id=user_id,
+            announcement_id=announcement_id,
+            kind=kind,
+        )
+    )
 
 
 @router.get("/visible")
@@ -246,11 +298,27 @@ async def mark_read(
     store = _get_store(request)
     if not await store.mark_read(announcement_id, user_id):
         raise HTTPException(404, "Announcement not found")
+    await _record_announcement_event("exposure", user_id, announcement_id)
     return {"ok": True}
 
 
 class ConsentPayload(BaseModel):
     decision: Literal["agree", "decline"]
+
+
+@router.post("/{announcement_id}/confirm")
+async def confirm_announcement(
+    announcement_id: str,
+    request: Request,
+    user_id: str = Depends(resolve_request_identity),
+):
+    """用户点"我知道"按钮：同时计入曝光和确认。"""
+    store = _get_store(request)
+    if not await store.mark_confirmed(announcement_id, user_id):
+        raise HTTPException(404, "Announcement not found")
+    await _record_announcement_event("exposure", user_id, announcement_id)
+    await _record_announcement_event("confirm", user_id, announcement_id)
+    return {"ok": True}
 
 
 @router.post("/{announcement_id}/consent")
@@ -260,7 +328,12 @@ async def record_consent(
     request: Request,
     user_id: str = Depends(resolve_request_identity),
 ):
+    """consent 型公告：同意计入确认，拒绝仅计曝光。"""
     store = _get_store(request)
     if not await store.record_consent(announcement_id, user_id, payload.decision):
         raise HTTPException(404, "Announcement not found")
+    await _record_announcement_event("exposure", user_id, announcement_id)
+    if payload.decision == "agree":
+        await store.mark_confirmed(announcement_id, user_id)
+        await _record_announcement_event("confirm", user_id, announcement_id)
     return {"ok": True}

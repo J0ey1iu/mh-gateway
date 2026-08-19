@@ -1058,12 +1058,54 @@
         }
       }
     },
+    "/api/v1/announcements/{announcement_id}/confirm": {
+      "post": {
+        "tags": [
+          "announcements"
+        ],
+        "summary": "Confirm Announcement",
+        "description": "\u7528\u6237\u70b9\"\u6211\u77e5\u9053\"\u6309\u94ae\uff1a\u540c\u65f6\u8ba1\u5165\u66dd\u5149\u548c\u786e\u8ba4\u3002",
+        "operationId": "confirm_announcement_api_v1_announcements__announcement_id__confirm_post",
+        "parameters": [
+          {
+            "name": "announcement_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Announcement Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/announcements/{announcement_id}/consent": {
       "post": {
         "tags": [
           "announcements"
         ],
         "summary": "Record Consent",
+        "description": "consent \u578b\u516c\u544a\uff1a\u540c\u610f\u8ba1\u5165\u786e\u8ba4\uff0c\u62d2\u7edd\u4ec5\u8ba1\u66dd\u5149\u3002",
         "operationId": "record_consent_api_v1_announcements__announcement_id__consent_post",
         "parameters": [
           {
@@ -4699,6 +4741,41 @@
           "image": {
             "type": "string",
             "title": "Image",
+            "default": ""
+          },
+          "style": {
+            "type": "string",
+            "enum": [
+              "image_text",
+              "text_only"
+            ],
+            "title": "Style",
+            "default": "image_text"
+          },
+          "media": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Media"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "published"
+            ],
+            "title": "Status",
+            "default": "published"
+          },
+          "start_time": {
+            "type": "string",
+            "title": "Start Time",
+            "default": ""
+          },
+          "end_time": {
+            "type": "string",
+            "title": "End Time",
             "default": ""
           }
         },

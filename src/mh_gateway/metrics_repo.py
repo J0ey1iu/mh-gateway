@@ -69,6 +69,20 @@ class ToolCallRecord:
 
 
 @dataclass
+class AnnouncementEventRecord:
+    """One announcement exposure / confirm event (admin metrics).
+
+    ``kind`` is ``"exposure"`` (点"我知道了"或叉关闭都算) or
+    ``"confirm"`` (只算点"我知道了"/同意)。确认事件一定伴随曝光事件。
+    """
+
+    ts: str  # ISO-8601 timestamp (UTC)
+    user_id: str
+    announcement_id: str
+    kind: str  # "exposure" | "confirm"
+
+
+@dataclass
 class RankedItem:
     """One ranked entity with usage + quality stats (per kind)."""
 
@@ -149,6 +163,8 @@ class MetricsSummary:
     avg_calls_per_session: float = 0.0
     tool_call_count: int = 0
     tool_error_count: int = 0
+    announcement_exposure_count: int = 0
+    announcement_confirm_count: int = 0
     model_perf: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -166,6 +182,8 @@ class MetricsSummary:
             "avg_calls_per_session": round(self.avg_calls_per_session, 2),
             "tool_call_count": self.tool_call_count,
             "tool_error_count": self.tool_error_count,
+            "announcement_exposure_count": self.announcement_exposure_count,
+            "announcement_confirm_count": self.announcement_confirm_count,
             "model_perf": self.model_perf,
         }
 
@@ -189,6 +207,9 @@ class MetricsRepository(Protocol):
 
     async def record_llm_call(self, record: LLMCallRecord) -> None: ...
     async def record_tool_call(self, record: ToolCallRecord) -> None: ...
+    async def record_announcement_event(
+        self, record: AnnouncementEventRecord
+    ) -> None: ...
     async def query_summary(
         self, date_from: str | None = None, date_to: str | None = None
     ) -> MetricsSummary: ...
@@ -238,6 +259,7 @@ class InMemoryMetricsRepository:
         self._lock = threading.Lock()
         self._llm: list[LLMCallRecord] = []
         self._tools: list[ToolCallRecord] = []
+        self._announcements: list[AnnouncementEventRecord] = []
 
     async def record_llm_call(self, record: LLMCallRecord) -> None:
         with self._lock:
@@ -247,13 +269,18 @@ class InMemoryMetricsRepository:
         with self._lock:
             self._tools.append(record)
 
+    async def record_announcement_event(self, record: AnnouncementEventRecord) -> None:
+        with self._lock:
+            self._announcements.append(record)
+
     async def query_summary(
         self, date_from: str | None = None, date_to: str | None = None
     ) -> MetricsSummary:
         with self._lock:
             llm = self._llm
             tools = self._tools
-        return _aggregate(llm, tools, date_from, date_to)
+            announcements = self._announcements
+        return _aggregate(llm, tools, announcements, date_from, date_to)
 
     async def query_ranking(
         self,
@@ -317,6 +344,7 @@ def _iter_days(date_from: str, date_to: str) -> list[str]:
 def _aggregate(
     llm: list[LLMCallRecord],
     tools: list[ToolCallRecord],
+    announcements: list[AnnouncementEventRecord] | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
 ) -> MetricsSummary:
@@ -351,6 +379,15 @@ def _aggregate(
         summary.tool_call_count += 1
         if r.status == "error":
             summary.tool_error_count += 1
+
+    for e in announcements or []:
+        if not _within_range(e.ts, date_from, date_to):
+            continue
+        # 打点侧：确认动作记 exposure + confirm 两条事件，这里只按 kind 各自计数
+        if e.kind == "confirm":
+            summary.announcement_confirm_count += 1
+        else:
+            summary.announcement_exposure_count += 1
 
     summary.total_tokens = summary.prompt_tokens + summary.completion_tokens
     if summary.llm_call_count:

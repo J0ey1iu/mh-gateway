@@ -630,6 +630,10 @@ class AnnouncementRecord:
     announcement_id: str
     title: str
     body: str
+    # 标题/正文的多语言 JSON（{"zh": …,"en": …}，空 = 未提供）；
+    # title/body 为默认（兜底）语言，locale 字段按当前语言覆盖显示。
+    title_locale: str = ""
+    body_locale: str = ""
     consent_required: bool = False
     active: bool = True
     created_at: str = ""
@@ -642,6 +646,13 @@ class AnnouncementRecord:
     image: str = ""
     # 展示模板样式："image_text" = 图片横幅 + 文案；"text_only" = 纯文字
     style: str = "image_text"
+    # 媒体 URL 列表（图片 jpg/png/gif/webp + 视频 mp4），image_text 大版本轮播展示
+    media: list[str] = field(default_factory=list)
+    # 状态："draft" = 草稿（用户端不可见）；"published" = 已发布
+    status: str = "published"
+    # 生效时间范围（ISO 8601，空 = 不限）；与 active 共同决定公告是否有效
+    start_time: str = ""
+    end_time: str = ""
 
 
 @dataclass
@@ -653,6 +664,7 @@ class AnnouncementStats:
     """
 
     read_count: int = 0
+    confirm_count: int = 0
     agree_count: int = 0
     decline_count: int = 0
     total_users: int = 0
@@ -738,8 +750,14 @@ class AnnouncementStore(Protocol):
         ...
 
     async def mark_read(self, announcement_id: str, user_id: str) -> bool:
-        """Record that the user read the announcement. Returns False when
-        the announcement does not exist."""
+        """Record that the user read the announcement (曝光：点"我知道"或
+        点叉关闭都算). Returns False when the announcement does not exist."""
+        ...
+
+    async def mark_confirmed(self, announcement_id: str, user_id: str) -> bool:
+        """Record that the user explicitly confirmed the announcement
+        (确认：只有点"我知道"/同意按钮才算). Also marks it read. Returns
+        False when the announcement does not exist."""
         ...
 
     async def record_consent(
