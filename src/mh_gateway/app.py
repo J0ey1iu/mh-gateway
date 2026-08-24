@@ -149,10 +149,6 @@ TAGS_METADATA = [
         "description": "Tool 列表查询。获取当前用户有权使用的 Tool 列表。",
     },
     {
-        "name": "runtime_tools",
-        "description": "运行时工具执行。Agent 运行时调用的内置工具，包括 `discover_agents` 等。",
-    },
-    {
         "name": "tool-generator",
         "description": "AI 工具生成。通过 LLM 动态生成自定义 Tool 的定义与实现代码，支持 CRUD 和试运行。",
     },
