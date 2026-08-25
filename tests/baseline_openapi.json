@@ -2556,6 +2556,61 @@
         }
       }
     },
+    "/api/v1/management/provider-configs/{name}/test": {
+      "post": {
+        "tags": [
+          "management"
+        ],
+        "summary": "Test Provider Config",
+        "description": "\u9a8c\u8bc1\u5df2\u4fdd\u5b58\u7684 provider + \u7ed1\u5b9a\u6a21\u578b\u80fd\u5426\u8054\u901a\uff08\u771f\u5b9e\u53d1\u8d77\u4e00\u6b21\u6700\u5c0f LLM \u8c03\u7528\uff09\u3002\n\n\u7528\u5b58\u50a8\u7684 api_key/base_url + \u6307\u5b9a model\uff08\u6216 default_model\uff09\u6784\u9020 provider\uff0c\n\u53d1\u9001\u4e00\u6761 \"ping\"\uff0c\u5b8c\u6574\u6d88\u8d39\u54cd\u5e94\u6d41\u2014\u2014\u8fde\u63a5\u5931\u8d25\u3001\u9274\u6743\u5931\u8d25\u3001\u6a21\u578b\u65e0\u6548\u90fd\u4f1a\u629b\u5f02\u5e38\u3002",
+        "operationId": "test_provider_config_api_v1_management_provider_configs__name__test_post",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderTestRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Test Provider Config Api V1 Management Provider Configs  Name  Test Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/management/provider-configs/{name}/models": {
       "get": {
         "tags": [
@@ -5154,6 +5209,17 @@
           "name"
         ],
         "title": "ProviderCreate"
+      },
+      "ProviderTestRequest": {
+        "properties": {
+          "model": {
+            "type": "string",
+            "title": "Model",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "ProviderTestRequest"
       },
       "ProviderUpdate": {
         "properties": {
