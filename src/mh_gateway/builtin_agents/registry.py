@@ -70,8 +70,7 @@ async def _discover_agents_fn(
     if adapters.authorization is not None:
         user_perms = await adapters.authorization.get_permissions(identity)
 
-    # 当前场景下的 agent 集合（再按用户权限过滤）；``scenario_id`` 为空时
-    # 只按权限过滤 —— 与 ``runtime_tools`` 的 HTTP 端点行为保持一致。
+    # 当前场景下的 agent 集合（再按用户权限过滤）；``scenario_id`` 为空时只按权限过滤。
     scenario_agent_names: set[str] | None = None
     if scenario_id:
         scenario_data = await adapters.metadata.get_scenario(scenario_id)

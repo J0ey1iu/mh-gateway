@@ -10,7 +10,6 @@ from mh_gateway.api.guide import router as guide_router
 from mh_gateway.api.management import router as management_router
 from mh_gateway.api.metrics_management import router as metrics_management_router
 from mh_gateway.api.portal import router as portal_router
-from mh_gateway.api.runtime_tools import router as runtime_tools_router
 from mh_gateway.api.scenarios import router as scenarios_router
 from mh_gateway.api.sessions import router as sessions_router
 from mh_gateway.api.tools import router as tools_router
@@ -27,7 +26,6 @@ router.include_router(agents_router)
 router.include_router(announcements_router)
 router.include_router(attachments_router)
 router.include_router(tools_router)
-router.include_router(runtime_tools_router)
 router.include_router(feedback_router)
 router.include_router(management_router)
 router.include_router(metrics_management_router)
