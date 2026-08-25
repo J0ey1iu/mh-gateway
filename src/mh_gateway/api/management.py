@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from mh_gateway.adapters import Feedback
+from mh_gateway.adapters import Feedback, LLMResolveSpec
 
 from mh_gateway.api.dependencies import get_current_user, require_permission
 from mh_gateway.api.imports import (
@@ -171,6 +174,10 @@ class ProviderUpdate(BaseModel):
     default_model: str | None = None
     description: str | None = None
     models: list[ModelInfo] | None = None
+
+
+class ProviderTestRequest(BaseModel):
+    model: str = ""
 
 
 class AddScenarioAgentRequest(BaseModel):
@@ -630,6 +637,59 @@ async def update_provider_config(
             e,
         )
         raise HTTPException(404, str(e)) from None
+
+
+@router.post("/provider-configs/{name}/test")
+async def test_provider_config(
+    request: Request,
+    name: str,
+    body: ProviderTestRequest,
+    user_id: str = Depends(require_permission("manage:agent:*")),
+) -> dict[str, Any]:
+    """验证已保存的 provider + 绑定模型能否联通（真实发起一次最小 LLM 调用）。
+
+    用存储的 api_key/base_url + 指定 model（或 default_model）构造 provider，
+    发送一条 "ping"，完整消费响应流——连接失败、鉴权失败、模型无效都会抛异常。
+    """
+    llm = request.app.state.adapters.llm
+    cfg = await llm.get_config(name)
+    if cfg is None:
+        raise HTTPException(404, "Provider config not found")
+    model = (body.model or cfg.default_model or "").strip()
+    if not model:
+        raise HTTPException(
+            400, "No model to test: pass one or configure default_model"
+        )
+    if not cfg.api_key:
+        raise HTTPException(400, "Provider has no api_key configured")
+
+    started = time.monotonic()
+    try:
+        provider = await llm.create_llm(
+            LLMResolveSpec(
+                agent=SimpleNamespace(provider_name=name, provider="", model=model),
+                user=user_id,
+            )
+        )
+
+        async def _probe() -> None:
+            stream = await provider.chat(
+                [{"role": "user", "content": "ping"}], tools=[]
+            )
+            async for _ in stream:
+                pass  # 完整消费：连接/鉴权/模型错误在此抛出
+
+        await asyncio.wait_for(_probe(), timeout=15)
+    except asyncio.TimeoutError:
+        return {"ok": False, "model": model, "message": "Connection timed out (15s)"}
+    except Exception as e:
+        logger.warning("Provider connection test failed name=%s: %s", name, e)
+        return {"ok": False, "model": model, "message": str(e)[:300]}
+    duration_ms = round((time.monotonic() - started) * 1000)
+    logger.info(
+        "Provider connection test ok name=%s model=%s (%d ms)", name, model, duration_ms
+    )
+    return {"ok": True, "model": model, "message": f"Connected ({duration_ms} ms)"}
 
 
 @router.delete("/provider-configs/{name}")
