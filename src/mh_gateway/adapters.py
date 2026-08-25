@@ -610,7 +610,12 @@ class AttachmentStore(Protocol):
         ...
 
     async def delete(self, file_id: str) -> bool:
-        """Delete the attachment (metadata + bytes). Returns success."""
+        """Delete (or soft-delete) the attachment. Returns success.
+
+        Implementations may hard-delete or mark the record deleted and keep
+        the bytes; in either case the attachment must stop being visible to
+        ``get`` / ``open`` / ``list_for_session`` afterwards.
+        """
         ...
 
     async def close(self) -> None: ...
