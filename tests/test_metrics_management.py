@@ -490,6 +490,24 @@ class TestMetricsPersistenceMiddleware:
         finally:
             set_metrics_repo(None)
 
+    @pytest.mark.asyncio
+    async def test_empty_name_tool_call_not_recorded(self):
+        # 回归（issue #62 补充）：LLM 返回空名 tool_call（截断流）时
+        # 后端不得落库 "unknown"，直接跳过；只记正常名字的调用。
+        repo = InMemoryMetricsRepository()
+        set_metrics_repo(repo)
+        try:
+            mw = MetricsPersistenceMiddleware(user_id="u1", agent_id="a1")
+            await mw.on_tool_end({"function": {"name": "", "arguments": "{}"}}, "ok")
+            await mw.on_tool_end(
+                {"function": {"name": "bash", "arguments": "{}"}}, "ok"
+            )
+            page = await repo.query_ranking("tools")
+            assert {i.key for i in page.items} == {"bash"}
+            assert not any(i.key == "unknown" for i in page.items)
+        finally:
+            set_metrics_repo(None)
+
 
 class _DenyMetricsProvider:
     """Provider that grants everything except manage:metrics:*."""

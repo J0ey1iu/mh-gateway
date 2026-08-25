@@ -105,6 +105,12 @@ class MetricsPersistenceMiddleware(Middleware):
         if repo is None:
             return
         try:
+            tool_name = tool_call.get("function", {}).get("name", "")
+            if not tool_name:
+                # issue #62 补充：LLM 返回空名 tool_call（截断流）时不落库，
+                # 避免产生 "unknown" 幽灵 tool 记录。执行层已跳过，这里拦截
+                # 所有可能绕过的路径，确保后端永不记录 unknown。
+                return
             await repo.record_tool_call(
                 ToolCallRecord(
                     ts=_utc_now(),
@@ -112,8 +118,7 @@ class MetricsPersistenceMiddleware(Middleware):
                     session_id=self._session_id,
                     agent_name=self._agent_id,
                     scenario_id=self._scenario_id,
-                    tool_name=tool_call.get("function", {}).get("name", "")
-                    or "unknown",
+                    tool_name=tool_name,
                     status=status,
                 )
             )
