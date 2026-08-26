@@ -107,3 +107,20 @@ async def download_attachment(
         media_type=record.content_type or "application/octet-stream",
         headers={"Content-Disposition": disposition},
     )
+
+
+@router.delete("/{file_id}", status_code=204)
+async def delete_attachment(
+    request: Request,
+    file_id: str,
+    user_id: str = Depends(resolve_request_identity),
+):
+    store = _get_store(request)
+    record = await store.get(file_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    if record.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    await store.delete(file_id)
+    logger.info("attachment.deleted file_id=%s user=%s", file_id, user_id)
+    return None

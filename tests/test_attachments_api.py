@@ -172,3 +172,40 @@ def test_download_other_user_forbidden(client: TestClient) -> None:
 def test_download_unknown_404(client: TestClient) -> None:
     r = client.get("/api/v1/attachments/nope", headers={"X-User-Id": "1"})
     assert r.status_code == 404, r.text
+
+
+def test_delete_removes_attachment(client: TestClient) -> None:
+    up = client.post(
+        "/api/v1/attachments",
+        files={"file": ("a.md", b"x", "text/markdown")},
+        headers={"X-User-Id": "1"},
+    )
+    file_id = up.json()["file_id"]
+
+    r = client.delete(f"/api/v1/attachments/{file_id}", headers={"X-User-Id": "1"})
+    assert r.status_code == 204, r.text
+
+    # 删除后下载应 404
+    r = client.get(f"/api/v1/attachments/{file_id}", headers={"X-User-Id": "1"})
+    assert r.status_code == 404, r.text
+
+
+def test_delete_other_user_forbidden(client: TestClient) -> None:
+    up = client.post(
+        "/api/v1/attachments",
+        files={"file": ("a.md", b"x", "text/markdown")},
+        headers={"X-User-Id": "1"},
+    )
+    file_id = up.json()["file_id"]
+
+    r = client.delete(f"/api/v1/attachments/{file_id}", headers={"X-User-Id": "2"})
+    assert r.status_code == 403, r.text
+
+    # 非 owner 删除失败后文件仍可下载
+    r = client.get(f"/api/v1/attachments/{file_id}", headers={"X-User-Id": "1"})
+    assert r.status_code == 200, r.text
+
+
+def test_delete_unknown_404(client: TestClient) -> None:
+    r = client.delete("/api/v1/attachments/nope", headers={"X-User-Id": "1"})
+    assert r.status_code == 404, r.text
