@@ -247,7 +247,11 @@ async def upload_announcement_image(
 
 
 @router.get("/images/{image_id}")
-async def get_announcement_image(request: Request, image_id: str):
+async def get_announcement_image(
+    request: Request,
+    image_id: str,
+    user_id: str = Depends(resolve_request_identity),
+):
     store = _get_store(request)
     opened = await store.open_image(image_id)
     if opened is None:
