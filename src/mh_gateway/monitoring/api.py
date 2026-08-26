@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from mh_gateway.api.dependencies import require_permission
 from mh_gateway.monitoring.collector import get_collector
 
 metrics_router = APIRouter(prefix="/api/v1", tags=["metrics"])
 
 
 @metrics_router.get("/metrics")
-async def get_metrics():
+async def get_metrics(
+    user_id: str = Depends(require_permission("manage:metrics:*")),
+):
     collector = get_collector()
     if collector is None:
         raise HTTPException(status_code=404, detail="Metrics not enabled")
