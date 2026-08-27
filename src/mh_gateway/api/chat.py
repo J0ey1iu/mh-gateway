@@ -79,6 +79,10 @@ async def _finalize_run(
             get_current_trace_id(),
         )
         task.cancel()
+        # 等 task 彻底落定：agent 被取消时会把已收到的 partial 存进 memory
+        # （base.py 修复），落定后仍需落库并标记 finished，否则 status 卡在 running。
+        await asyncio.gather(task, return_exceptions=True)
+        await _persist_and_finish(memory_id, session, store, message, "cancelled")
     except Exception:
         logger.exception("chat.run.error session=%s", memory_id)
     else:
@@ -87,29 +91,45 @@ async def _finalize_run(
             memory_id,
             get_current_trace_id(),
         )
-        try:
-            if not session.title:
-                session.title = message[:80]
-            extra = {"title": session.title} if session.title else {}
-            await store.save_memory(session.memory, memory_id, extra=extra)
-        except Exception:
-            logger.exception("chat.persist.error session=%s", memory_id)
-        else:
-            logger.info(
-                "chat.persist.ok session=%s messages=%d trace=%s",
-                memory_id,
-                len(session.get_all_messages()),
-                get_current_trace_id(),
-            )
-        try:
-            # Mark AFTER save_memory: the list's "running" flag stays set until
-            # everything is on disk, so the frontend's running→idle transition
-            # can safely refetch the completed history.
-            await store.mark_run_finished(memory_id)
-        except Exception:
-            logger.exception("chat.status.error session=%s phase=finished", memory_id)
+        await _persist_and_finish(memory_id, session, store, message, "finished")
     finally:
         await release_session_lock(memory_id, lock)
+
+
+async def _persist_and_finish(
+    memory_id: str,
+    session: Any,
+    store: SessionRepository,
+    message: str,
+    phase: str,
+) -> None:
+    """Persist the (possibly partial) session and mark the run finished.
+
+    Shared by the normal-finished and cancelled paths, so a cancelled run
+    whose partial content reached memory (see ``base.py``) is still saved
+    and its status is not left stuck in ``running``.
+    """
+    try:
+        if not session.title:
+            session.title = message[:80]
+        extra = {"title": session.title} if session.title else {}
+        await store.save_memory(session.memory, memory_id, extra=extra)
+    except Exception:
+        logger.exception("chat.persist.error session=%s", memory_id)
+    else:
+        logger.info(
+            "chat.persist.ok session=%s messages=%d trace=%s",
+            memory_id,
+            len(session.get_all_messages()),
+            get_current_trace_id(),
+        )
+    try:
+        # Mark AFTER save_memory: the list's "running" flag stays set until
+        # everything is on disk, so the frontend's running→idle transition
+        # can safely refetch the completed history.
+        await store.mark_run_finished(memory_id)
+    except Exception:
+        logger.exception("chat.status.error session=%s phase=%s", memory_id, phase)
 
 
 # Cancel-marker poll interval: a cancel request can land on any worker in a
