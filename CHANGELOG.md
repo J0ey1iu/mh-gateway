@@ -1,5 +1,43 @@
 # Change Log
 
+## 0.1.2a9
+
+- feat(api): add `DELETE /api/v1/attachments/{file_id}` —
+  `AttachmentStore.delete()` already existed but no HTTP endpoint
+  exposed it, so uploaded files could never be removed and orphaned
+  uploads accumulated on disk. Owner-enforced delete matching the
+  download endpoint's semantics (404 unknown, 403 non-owner, 204 on
+  success); OpenAPI baseline regenerated.
+- feat(api): add provider connection test endpoint —
+  `POST /api/v1/management/provider-configs/{name}/test` rebuilds the
+  saved provider + bound model via `create_llm` and sends a minimal
+  ping (drains the stream; connection / auth / model errors surface as
+  exceptions). Returns `{ok, model, message}`; 15s timeout; 404 on
+  unknown config, 400 on missing model/api_key.
+- feat(api): require auth on announcement images and permission on
+  `/metrics` — `GET /api/v1/announcements/images/{image_id}` was fully
+  public and now resolves identity like the user-facing announcement
+  endpoints; `GET /api/v1/metrics` (monitoring) is now guarded by
+  `manage:metrics:*` matching the management metrics endpoints. Local
+  deployments (always-admin auth) are unaffected.
+- fix(metrics): never record empty-name tool calls as "unknown"
+  (issue #62 follow-up) — the middleware previously fell back to the
+  literal string `"unknown"` when a tool_call had an empty/missing
+  `function.name`, so a phantom row could still land even after the
+  harness started skipping those calls. The middleware now skips the
+  record entirely when the name is empty. Adds a regression test.
+- refactor(api): remove obsolete `runtime_tools` HTTP endpoint —
+  `discover_agents` / `handoff` already live as built-in local fns in
+  `builtin_agents/registry.py` (`_discover_agents_fn` / `_handoff_fn`,
+  run via `LocalToolBinding`), so the old
+  `POST /api/v1/tools/discover_agents/execute` was a duplicate. Drops
+  `src/mh_gateway/api/runtime_tools.py`, the router include, the
+  `TAGS_METADATA` entry and the stale comments; OpenAPI baseline
+  regenerated (announcements `title_locale` / `body_locale` schema
+  synced).
+- deps: minimal-harness>=0.8.1a7 (lockstep publish set
+  0.8.1a7/0.1.2a9/0.1.2a10).
+
 ## 0.1.2a7
 
 - feat(announcements): draft/publish lifecycle, validity window, media
