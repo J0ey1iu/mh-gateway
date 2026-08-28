@@ -1,5 +1,18 @@
 # Change Log
 
+## 0.1.2a10
+
+- fix(chat): persist and finish a cancelled chat run (issue #94) —
+  `_finalize_run`'s cancelled branch only re-cancelled the task and did
+  nothing else, so a cancelled run's partial content was never persisted
+  and the session stayed stuck in "running". The cancelled branch now
+  waits for the task to settle (the agent has saved any partial reply to
+  memory) and then runs the same `save_memory` + `mark_run_finished`
+  path as a normal finish. Depends on the minimal-harness fix that
+  saves the partial stream on `CancelledError`. Adds a regression test
+  asserting a cancelled run still persists and marks finished.
+- release: lockstep bump to 0.8.1a8/0.1.2a10/0.1.2a11 publish set.
+
 ## 0.1.2a9
 
 - feat(api): add `DELETE /api/v1/attachments/{file_id}` —
